@@ -10,6 +10,20 @@ What changed for people using the Echo, newest first. Details and measurements a
   The light towards whoever speaks stays, brighter and paler; the mute ring stays red, and the volume and timer rings
   stay Amazon's. The Echo makes the themes itself from Amazon's own rings at its first start with this version (a
   second without light, as for the light ring), only on an Echo whose rings are the blue it knows (the Echo Dot 2's).
+- **The Echo in the room where music plays answers its wake words.** Music beside an Echo drowns out a wake word said
+  right next to it, so the Echo in the next room, which heard you over less noise, answered instead: a Sonos playing
+  in the kitchen handed the kitchen's wake words to the living room. List the media players of each Echo's room on its
+  settings page ("Media players in this room", under wake word arbitration: entity ids such as
+  `media_player.kitchen_sonos`, at most 8). While one of them plays, or the Echo plays music itself (Music Assistant,
+  Bluetooth), and for 2 minutes after, that Echo counts the room's background noise only at "Background noise while
+  media plays" (50 % by default, worth 3 dB; 100 % switches it off). Home Assistant tells the Echo what the
+  players do over its encrypted connection: nothing to set up there. An Echo you are talking to still keeps the next
+  wake word, and older Echos in the network take part as before. The page shows whether media counts right now, and
+  the log notes it for every wake word.
+- **Settings page: media players.** The background setting now sits right under the list of players, and says it
+  also applies to the Echo's own music. The page says when Home Assistant does not report a listed player (a typo in
+  the entity id) or is not connected. A refused list stays in the field, marked, with the reason under it. A settings
+  line too long to take is refused whole when imported, instead of being cut short.
 
 ## 2026-10-13
 
