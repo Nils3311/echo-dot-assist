@@ -646,6 +646,14 @@ static void wake_phrase_bare(char *out, size_t cap)
 static long long wake_cut_ms;    /* when the wake word last cut a reply or an alarm: a "stop" right behind it belongs to that */
 static long long last_wake_ms;   /* Amazon's models know "stop" only in the ~2 s after the wake word (op.cfg.json: awake state) */
 static int quiet_abort;
+/* Lock held.  heard_ms: when the engine last reported the wake word (on_wake; SIGUSR1 on the PC), stop_ms its last
+ * "stop": a "stop" after heard_ms is that wake word's.  run_wake_ms: when this Echo's own wake word opened the run that
+ * goes on now (0: a follow-up of a conversation, the button, -w remote), run_kw that wake word; barge_wake: the run
+ * barge_in starts is for a wake word (cut reply), not a follow-up */
+static long long heard_ms, stop_ms, run_wake_ms;
+static char run_kw[64];
+static int barge_wake;
+static int takeover = 1;                            /* setting arbitration_takeover: takeable, stopped_now */
 
 static atomic_int afe_asked;                        /* the front end was asked for the wake word's energies (afe_score) */
 
@@ -679,9 +687,12 @@ static void listening_apply(void)
 }
 static void listening(int on) { listen_pipe = on; listening_apply(); }
 
-static void pipeline_start(uint64_t from)    /* from: where the wake word that starts it ended, 0: not a wake word */
+/* from: where the wake word that starts it ended, 0: not a wake word; own: this Echo's own wake word opened it */
+static void pipeline_start(uint64_t from, int own)
 {
     quiet_abort = 0;
+    run_wake_ms = own ? mono_ms() : 0;
+    if (own) wake_phrase_bare(run_kw, sizeof run_kw);
     mic_fresh = 1;
     replay_from = from;
     proto->start();
@@ -701,6 +712,8 @@ void core_remote_wake(void)
 }
 
 int core_wake_sound(int set) { if (set >= 0) use_earcon = set; return use_earcon; }
+
+int core_takeover(int set) { if (set >= 0) takeover = set != 0; return takeover; }
 
 int core_bt_announce(int set) { if (set >= 0) use_bt_announce = set; return use_bt_announce; }
 
@@ -948,20 +961,22 @@ static void mic_stopped(void)
 
 void core_mic_off(void) { atomic_store(&whisper_eou, 1); atomic_store(&streaming, 0); mic_stopped(); }
 
-void core_restart_after(void) { barge_in = 1; barge_from = 0; }
+void core_restart_after(void) { barge_in = 1; barge_from = 0; barge_wake = 0; }
 
 void core_pipeline_finish(void)
 {
     if (atomic_exchange(&streaming, 0) && connected && proto->stop) proto->stop();
     mic_stopped();
     core_set_state(IDLE);
+    run_wake_ms = 0;
     if (mono_ms() - last_wake_ms > 3000) wake_reset();      /* a reset puts the engine back to sleep: "<wake word>, stop" would lose its "stop" */
     if (!connected) barge_in = 0;
     if ((barge_in || !core_local_wake) && satellite_running && connected) {
         if (barge_in) sound_request(SND_WAKE);
         uint64_t from = barge_in ? barge_from : 0;      /* what was said after the wake word while the reply was cut */
-        barge_in = 0; barge_from = 0;
-        pipeline_start(from);
+        int own = barge_in && barge_wake;
+        barge_in = 0; barge_from = 0; barge_wake = 0;
+        pipeline_start(from, own);
     }
 }
 
@@ -971,7 +986,7 @@ void core_link(int up, int ready)
     connected = up; satellite_running = up && ready;
     if (satellite_running) adopted();
     if (!satellite_running) core_pipeline_finish();
-    else if (!was && !core_local_wake && state == IDLE) pipeline_start(0);
+    else if (!was && !core_local_wake && state == IDLE) pipeline_start(0, 0);
 }
 
 void core_error(void)
@@ -979,6 +994,37 @@ void core_error(void)
     if (quiet_abort) { quiet_abort = 0; return; }      /* Home Assistant's complaint about a pipeline "stop" ended: not news */
     if (state != SPEAKING) { led("-s", "anim_start_error_short"); core_pipeline_finish(); }
 }
+
+/* Lock held.  Ends the run without anything of it carried out: Home Assistant aborts it (VoiceAssistantRequest
+ * start=false, esphome's handle_stop(abort)) and its complaint about that is not shown (quiet_abort) */
+static void quiet_cancel(void)
+{
+    barge_in = 0;
+    atomic_store(&streaming, 0);
+    if (connected && proto->cancel) proto->cancel();
+    core_pipeline_finish();
+    quiet_abort = 1;
+}
+
+/* Takeover (setting arbitration_takeover, which also has "stop" end listening: stop_word).  A wrong Echo that woke up
+ * (the TV, children in another room) listened for up to 15 s (Home Assistant's VAD limit), and claimed every wake word
+ * in that time with priority: "Alexa" said anywhere else was lost to it (2026-10-18 18:16:30, the living room took the
+ * kitchen's command).  So a run this Echo's own wake word opened has no priority while it only listens: a new wake
+ * word goes to whichever Echo heard it best, and this one ends its run quietly when it heard that wake word too and
+ * lost the round (lost); when it wins, it listens anew from that wake word.  Not when it did not hear it: another
+ * Echo's "answers" alone would let an "Alexa" upstairs end a real command downstairs.  Follow-ups of a conversation,
+ * the button's runs, THINKING and SPEAKING keep it (another Echo answering then would talk over the reply), and so does
+ * a run younger than TAKEOVER_MS: Home Assistant takes one start per wake word in 2 s (WAKE_WORD_COOLDOWN, counted
+ * from the last start), so a takeover sooner would leave the new run refused and nobody listening; the margin covers
+ * the round and the way to Home Assistant.  Lock held */
+#define TAKEOVER_MS 2500
+static int takeable(void)
+{
+    return takeover && state == LISTENING && run_wake_ms && !atomic_load(&alarm_on) && mono_ms() - run_wake_ms >= TAKEOVER_MS;
+}
+
+/* "Stop" right behind the wake word just heard (arbitration_takeover): that wake word starts nothing.  Lock held */
+static int stopped_now(void) { return takeover && stop_ms >= heard_ms && heard_ms && stop_ms - heard_ms < 4000; }
 
 /* touch: the action button rather than the wake word.  from: where the wake word ended on the ring's clock (0: unknown) */
 static void trigger(int touch, uint64_t from)
@@ -990,33 +1036,32 @@ static void trigger(int touch, uint64_t from)
     if (touch && atomic_load(&alarm_on)) {
         core_alarm_stop("button");
         wake_cut_ms = mono_ms();
-    } else if ((state == THINKING || (touch && state == LISTENING)) && connected && proto->cancel) {
+    } else if ((state == THINKING || (touch && state == LISTENING) || (!touch && takeable())) && connected && proto->cancel) {
         /* As the center button of a Voice PE: a misheard command is stopped before its tool calls run, not only its
          * reply.  Same message as ESPHome's voice_assistant.stop; Home Assistant cancels the run's task (the LLM, and
-         * the tool calls it has not made yet).  The wake word does the same and then listens again, as during a reply */
+         * the tool calls it has not made yet).  The wake word does the same and then listens again, as during a reply;
+         * so does a takeover's (above) on a run that only listens, unless "stop" followed it already */
         fprintf(stderr, "%s: pipeline cancelled\n", touch ? "button" : "wake word");
-        barge_in = 0;
-        atomic_store(&streaming, 0);
-        proto->cancel();
-        core_pipeline_finish();
-        quiet_abort = 1;
-        if (!touch && state == IDLE && satellite_running && !core_muted()) {
+        quiet_cancel();
+        if (!touch && state == IDLE && satellite_running && !core_muted() && !stopped_now()) {
             wake_cut_ms = mono_ms();
             sound_request(SND_WAKE);
-            pipeline_start(from);
+            pipeline_start(from, 1);
         }
     } else if (!connected || !satellite_running || core_muted()) {
         /* nothing to talk to, or privacy latch on */
+    } else if (state == IDLE && !touch && stopped_now()) {
+        fprintf(stderr, "stop: came during the round, nothing started\n");
     } else if (state == IDLE) {
         if (atomic_load(&alarm_on)) wake_cut_ms = mono_ms();    /* its "stop" drops this pipeline again */
         if (touch) wake_phrase[0] = 0;                          /* the button: the first wake word's assistant */
         sound_request(touch ? SND_TOUCH : SND_WAKE);
-        pipeline_start(touch ? 0 : from);
+        pipeline_start(touch ? 0 : from, !touch);
     } else if (state == SPEAKING && !atomic_load(&flush_playback)) {       /* not already being cut.  barge_in alone does not
                                                                              * say that: continue-conversation sets it too */
         fprintf(stderr, "barge-in\n");
         wake_cut_ms = mono_ms();
-        barge_in = 1; barge_from = from;
+        barge_in = 1; barge_from = from; barge_wake = 1;
         atomic_store(&flush_playback, 1);   /* playback thread drops TTS up to audio-stop, then we restart */
     }
     pthread_mutex_unlock(&core_lock);
@@ -1027,23 +1072,33 @@ static void trigger(int touch, uint64_t from)
  * It ends what is making noise and never starts anything:
  * a ringing alarm, a reply being spoken (also one that would listen again afterwards).  Said as "<wake word>, stop", the wake
  * word has already cut the reply and opened a new pipeline by the time "stop" is recognised: that pipeline is dropped again.
- * Only then: "<wake word>, stop the music" out of silence is a command for Home Assistant, not for us. */
+ * With arbitration_takeover (default) "<wake word>, stop" means "be quiet" everywhere: it drops the run its wake word
+ * opened out of silence too, or keeps the round's winner from opening one (stopped_now), and a run that only listened
+ * already.  The living room's log 2026-10-12..19: "stop" in 24 of 700 wake words, 13 where that Echo answered, 2 of them
+ * false ("Alexa, leiser"): such a command is lost and has to be said again.  Media is paused with "<wake word>, pause".
+ * Off: "<wake word>, stop the music" out of silence is a command for Home Assistant, not for us. */
 static void stop_word(void)
 {
     if (dropin_running() && dropin_status(NULL, 0) != DROPIN_IDLE) dropin_hangup("stop");     /* and the pipeline its wake word opened */
     pthread_mutex_lock(&core_lock);
+    long long now = mono_ms();
+    stop_ms = now;
     if (atomic_load(&alarm_on)) core_alarm_stop("stop");        /* and the pipeline its wake word opened, below */
     if (state == SPEAKING) {
         fprintf(stderr, "stop: reply cut\n");
         barge_in = 0;
         atomic_fetch_and(&sounds_pending, ~(1 << SND_WAKE | 1 << SND_TOUCH));
         atomic_store(&flush_playback, 1);
-    } else if (state == LISTENING && mono_ms() - wake_cut_ms < 4000) {
+    } else if (state == LISTENING && now - wake_cut_ms < 4000) {
         fprintf(stderr, "stop: pipeline dropped\n");
         atomic_fetch_and(&sounds_pending, ~(1 << SND_WAKE | 1 << SND_TOUCH));
         barge_in = 0;
         core_pipeline_finish();
         quiet_abort = 1;
+    } else if (state == LISTENING && stopped_now()) {           /* as the button: nothing of the run is carried out */
+        fprintf(stderr, "stop: listening ended\n");
+        atomic_fetch_and(&sounds_pending, ~(1 << SND_WAKE | 1 << SND_TOUCH));
+        quiet_cancel();
     }
     pthread_mutex_unlock(&core_lock);
 }
@@ -1504,6 +1559,20 @@ size_t core_media_json(char *o, size_t cap)
     return n < cap ? n : cap - 1;
 }
 
+/* Takeover (trigger): another Echo took a wake word this Echo heard too (capture thread, the round lost).  A run of this
+ * Echo's own that only listens, for that wake word, ends quietly.  Not in Kiosk Satellite mode: no priority there */
+static void lost(void)
+{
+    char k[64];
+    pthread_mutex_lock(&core_lock);
+    wake_phrase_bare(k, sizeof k);
+    if (takeable() && arb_mode(-1) == ARB_HASSMIC && !strcasecmp(k, run_kw)) {
+        fprintf(stderr, "takeover: another Echo heard the wake word better, pipeline cancelled\n");
+        quiet_cancel();
+    }
+    pthread_mutex_unlock(&core_lock);
+}
+
 static void answer(uint64_t from)                   /* capture thread: act on the wake word that ended at from */
 {
     trigger(0, from);
@@ -1522,13 +1591,14 @@ static void answer(uint64_t from)                   /* capture thread: act on th
  * music in the kitchen and the talker in the living room, is not measured yet: hence 3 dB by default, 10 dB at most
  * (10 %).  On the wire it is only a higher score: claims keep their format, older Echos compare the number, and a
  * member could always claim any score.  An Echo in a conversation or ringing still claims priority 2, which no score
- * beats; so does one Home Assistant plays media on (play_media: state not IDLE), as before. */
+ * beats; so does one Home Assistant plays media on (play_media: state not IDLE), as before, but not one that only
+ * listens after a wake word of its own (takeable, arbitration_takeover). */
 static void wake_heard(uint64_t begin, uint64_t end, int simulated)     /* capture thread */
 {
     if (!arb_running()) { trigger(0, end); return; }
     if (arb_due) return;                            /* the same wake word once more while its round runs */
     pthread_mutex_lock(&core_lock);
-    int alarm = atomic_load(&alarm_on), can = alarm || (connected && satellite_running && !core_muted()), prio = alarm || state != IDLE ? 2 : 0;
+    int alarm = atomic_load(&alarm_on), can = alarm || (connected && satellite_running && !core_muted()), prio = alarm || (state != IDLE && !takeable()) ? 2 : 0;
     pthread_mutex_unlock(&core_lock);
     if (!can) { trigger(0, end); return; }               /* could not answer: a claim would only silence the Echos that can */
     /* the one heard: with two wake words, Echos compete per wake word as they do with one each */
@@ -1610,7 +1680,7 @@ static void on_wake(int slot, const char *keyword, uint64_t begin, uint64_t end)
     last_wake_ms = mono_ms();
     atomic_store(&wake_slot_heard, slot);
     { float db = 10 * log10f((ring_power(begin, end) + 1) / (32768.0f * 32768.0f));     /* the talker's level, for the gain */
-      pthread_mutex_lock(&core_lock); keyword_db = db; snprintf(wake_phrase, sizeof wake_phrase, "%s", wake_loaded[slot]); pthread_mutex_unlock(&core_lock); }
+      pthread_mutex_lock(&core_lock); keyword_db = db; heard_ms = last_wake_ms; snprintf(wake_phrase, sizeof wake_phrase, "%s", wake_loaded[slot]); pthread_mutex_unlock(&core_lock); }
     if (!arb_running()) { trigger(0, end); return; }
     pthread_mutex_lock(&core_lock); det_begin = begin; det_end = end; pthread_mutex_unlock(&core_lock);
     atomic_store(&det_pending, 1);                  /* the ring is the capture thread's */
@@ -2332,7 +2402,7 @@ static void *capture_thread(void *arg)
         if (atomic_exchange(&pair_pending, 0)) on_pair();          /* SIGWINCH: both volume keys held, for tests on the PC */
         { int t = atomic_exchange(&trigger_pending, 0);               /* 1: SIGUSR1 plays a wake word of the last 0.6 s that */
           uint64_t lag = CAP_RATE * 128 / 1000;                       /* ended 128 ms ago, as late as Pryon accepts one */
-          if (t == 1) { pthread_mutex_lock(&core_lock); wake_phrase[0] = 0; pthread_mutex_unlock(&core_lock); }   /* the first one's */
+          if (t == 1) { pthread_mutex_lock(&core_lock); wake_phrase[0] = 0; heard_ms = mono_ms(); pthread_mutex_unlock(&core_lock); }   /* the first one's */
           if (t == 2) trigger(1, 0);
           else if (t == 1 && ring_n > CAP_RATE) wake_heard(ring_n - CAP_RATE * 6 / 10, ring_n - lag, 1);
           else if (t == 1) wake_heard(0, ring_n, 1); }
@@ -2403,7 +2473,7 @@ static void *capture_thread(void *arg)
             pthread_mutex_lock(&core_lock); uint64_t b = det_begin, e = det_end; pthread_mutex_unlock(&core_lock);
             wake_heard(b, e, 0);
         }
-        if (arb_due && (mono_ms() >= arb_due || arb_settled())) { arb_due = 0; if (arb_decide()) answer(arb_from); else afe_done(); }    /* after this block went out live */
+        if (arb_due && (mono_ms() >= arb_due || arb_settled())) { arb_due = 0; if (arb_decide()) answer(arb_from); else { lost(); afe_done(); } }    /* after this block went out live */
 
         pthread_mutex_lock(&core_lock);
         if (core_local_wake && (state == LISTENING || state == THINKING) && time(NULL) - state_since > PIPELINE_TIMEOUT) {

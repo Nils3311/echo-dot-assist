@@ -162,6 +162,10 @@ int    core_media_players(const char *list, char *err, size_t errsz);  /* "media
 const char *core_media_list(void);                          /* the list as stored: ids, comma separated */
 const char *core_media_player(int i);                       /* the i-th id, NULL past the end */
 int    core_media_ambient(int set);                         /* 10..100 %, 100 = off; -1 reads */
+/* main.c trigger, stop_word (arbitration_takeover): a run that only listens after this Echo's own wake word gives way
+ * to a new wake word another Echo heard better, and "<wake word>, stop" drops the run that wake word opened.  0/1; -1
+ * reads.  Lock held */
+int    core_takeover(int set);
 int    core_media_state(const char *entity, const char *state);    /* Home Assistant's state of one: 1 if it is listed */
 int    core_media_volume(const char *entity, const char *value);   /* its volume_level, for the media log: 1 if listed */
 void   core_media_followed(void);                           /* a keyed link follows the listed players from now on */

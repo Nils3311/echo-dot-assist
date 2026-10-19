@@ -2,6 +2,21 @@
 
 What changed for people using the Echo, newest first. Details and measurements are in [PLAN.md](PLAN.md).
 
+## 2026-10-19
+
+- **A new wake word takes over from an Echo that woke up by mistake.** An Echo that woke up wrongly (the TV, children
+  in another room) listened for up to 15 s and kept every wake word said meanwhile: "Alexa" in the kitchen was lost to
+  the living room. Now, once it has listened for 2.5 s, it gives way: when it hears a new wake word that another Echo
+  heard better, it stops quietly and that Echo answers; when it heard you best itself, it listens afresh from your
+  wake word. A wake word it did not hear leaves it alone (an "Alexa" upstairs does not end a command downstairs). An
+  Echo in a conversation (a follow-up question), busy with a reply or ringing keeps the next wake word as before.
+- **"Alexa, stop" means "be quiet".** Right behind the wake word, "stop" now also ends listening: the Echo stops at
+  once and sends nothing, and when it hears both words together it does not start at all (also when several Echos
+  heard you). A ringing timer and a reply being spoken stop as before. Pause music with "Alexa, pause". Now and then
+  the engine hears "stop" in a command ("Alexa, leiser"): say it again.
+- Both hang on one setting, "A new wake word or stop ends listening" (Voice), on by default; off, everything is as
+  before. Update every Echo at once and set the same on each.
+
 ## 2026-10-16
 
 - **Themes for the light ring**: "Light ring theme" on the settings page (Lights) colours the ring while the Echo

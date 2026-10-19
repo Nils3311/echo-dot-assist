@@ -12,7 +12,7 @@ then on every change, to each subscriber; dropped with the link), and Music Assi
 Sendspin (aiosendspin, as tests/fake_ma_sendspin.py).
 Everything goes out as loopback broadcast (HASSMIC_ARB_ADDR): nothing of it reaches the LAN."""
 import asyncio, base64, datetime, hashlib, json, os, re, signal, socket, struct, subprocess, sys, tempfile, time
-from aioesphomeapi import APIClient, VoiceAssistantEventType as Ev
+from aioesphomeapi import APIClient, VoiceAssistantEventType as Ev, VoiceAssistantTimerEventType as Tm
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
@@ -48,6 +48,7 @@ class Echo:
         os.makedirs(os.path.join(self.state, "models", "echo-de"))
         open(os.path.join(self.state, "models", "echo-de", "pryon.manifest"), "w").close()
         self.starts, self.states, self.allowed, self.chunks = [], {}, True, []
+        self.stops = []                                     # (when, abort): the device ended a run (abort: start=false)
         self.sendspin = 0                                   # -z: Sendspin's port, 0 none
 
     def start(self):
@@ -60,6 +61,7 @@ class Echo:
         except (OSError, AttributeError): return None
     def st(self, oid): return self.states.get(self.by[oid].key) if oid in self.by else None
     def wake(self): self.proc.send_signal(signal.SIGUSR1)
+    def stop(self): self.proc.send_signal(signal.SIGHUP)            # Pryon's "stop" right behind the wake word
     def pair(self): self.proc.send_signal(signal.SIGWINCH)          # Volume up + Volume down held
     def pub(self):                              # the arbitration identity's public key, from its private one
         sk = base64.b64decode(open(os.path.join(self.state, "arb_key")).read().strip())
@@ -93,8 +95,10 @@ class Echo:
         self.cli.subscribe_states(lambda s: self.states.__setitem__(s.key, getattr(s, "state", None)))
         self.cli.subscribe_home_assistant_states_and_services(on_state=lambda s: None, on_service_call=lambda c: ha.action(self, c),
                                                               on_state_sub=lambda e, a: ha.sub(self, e, a), on_state_request=lambda e, a: ha.state(self, e, a))
-        async def handle_start(conv, flags, settings, phrase): self.starts.append(time.monotonic()); self.chunks = []; return 0
-        async def handle_stop(abort): pass
+        async def handle_start(conv, flags, settings, phrase):     # RUN_START as Home Assistant's pipeline sends it: after a
+            self.starts.append(time.monotonic()); self.chunks = []    # cancel the Echo waits for it before it takes events again
+            self.cli.send_voice_assistant_event(Ev.VOICE_ASSISTANT_RUN_START, None); return 0
+        async def handle_stop(abort): self.stops.append((time.monotonic(), abort))
         async def handle_audio(data, *_): self.chunks.append(len(data))
         self.cli.subscribe_voice_assistant(handle_start=handle_start, handle_stop=handle_stop, handle_audio=handle_audio)
 
@@ -249,6 +253,7 @@ async def main():
         a.wake(); b.wake(); await asyncio.sleep(1.5)
         check(len(a.starts) == 2 and len(b.starts) == n, "in a conversation: the other Echo lets it have the wake word")
         a.end_pipeline(); await asyncio.sleep(0.5)
+
 
         # different wake words never compete: each Echo answers its own
         await a.cli.set_voice_assistant_configuration(["echo-de"]); await asyncio.sleep(0.5)
@@ -518,6 +523,92 @@ async def main():
         check(not w2["learning"] and w2["ms"] == w["ms"], f"after a restart: still learned, {w2['ms']} ms")
         fbeacon(b"\x01"); await asyncio.sleep(0.5)          # the hallway Echo switches arbitration off: nobody waits for it
         check(a.page.state()["arbitration"]["window"]["samples"] < len(delays), "a member out of rounds: its samples no longer count")
+
+        # (placed after the window's tests: its rounds would have the window learned before the new member came)
+        # Takeover (main.c trigger, arbitration_takeover): a run the Echo's own wake word opened has no priority once it
+        # has listened for 2.5 s, and ends quietly (start=false, no new run) when another Echo takes a wake word it heard too
+        async def listening(e, secs=2.8):               # a wrong wake-up: the run listens on
+            n = len(e.starts); e.wake(); await until(lambda: len(e.starts) == n + 1, 3); await asyncio.sleep(secs)
+        def took(e): return e.text().count("takeover: ")
+        # (1) both hear the new wake word, the other one better
+        await listening(a); na, nb, sa, ta = len(a.starts), len(b.starts), len(a.stops), took(a)
+        a.wake(); b.wake(); await until(lambda: len(b.starts) == nb + 1 and len(a.stops) > sa, 3); await asyncio.sleep(0.5)
+        check(len(b.starts) == nb + 1 and len(a.starts) == na and [x for _, x in a.stops[sa:]] == [True]
+              and "takeover: another Echo heard the wake word better" in a.text() and took(a) == ta + 1,
+              "takeover: both heard it, the better one answers, the listening one ends its run quietly (start=false)")
+        b.end_pipeline(); await asyncio.sleep(0.5)
+        # (2) only the other one hears it: its "answers" leaves this run alone (an "Alexa" upstairs must not end a real
+        # command downstairs)
+        await listening(a); na, nb, sa, ta = len(a.starts), len(b.starts), len(a.stops), took(a)
+        b.wake(); await until(lambda: len(b.starts) == nb + 1, 3); await asyncio.sleep(0.5)
+        check(len(b.starts) == nb + 1 and len(a.stops) == sa and took(a) == ta,
+              "takeover: only the other Echo heard it; this one listens on")
+        a.end_pipeline(); b.end_pipeline(); await asyncio.sleep(0.5)
+        # ...and a run younger than 2.5 s keeps the wake word (Home Assistant would refuse a new run: one start per wake
+        # word in 2 s)
+        await listening(a, 0.8); na, nb, sa, ta = len(a.starts), len(b.starts), len(a.stops), took(a)
+        a.wake(); b.wake(); await asyncio.sleep(1.5)
+        check(len(a.starts) == na and len(b.starts) == nb and len(a.stops) == sa and took(a) == ta,
+              "takeover: a run younger than 2.5 s keeps the wake word and listens on")
+        a.end_pipeline(); await asyncio.sleep(0.5)
+        # the listening Echo hears the new wake word alone: it listens anew from it
+        await listening(a); na, sa = len(a.starts), len(a.stops)
+        a.wake(); await until(lambda: len(a.starts) == na + 1, 3); await asyncio.sleep(0.3)
+        check(len(a.starts) == na + 1 and [x for _, x in a.stops[sa:]] == [True] and "wake word: pipeline cancelled" in a.text(),
+              "takeover: its own wake word again after 2.5 s: the run is cancelled and a new one listens")
+        a.end_pipeline(); await asyncio.sleep(0.5)
+        # (3) a follow-up of a conversation (continue_conversation, started by the Echo itself) keeps its priority
+        n = len(a.starts); a.wake(); await until(lambda: len(a.starts) == n + 1, 3)
+        a.cli.send_voice_assistant_event(Ev.VOICE_ASSISTANT_INTENT_END, {"conversation_id": "x", "continue_conversation": "1"})
+        a.end_pipeline(); await until(lambda: len(a.starts) == n + 2, 3); await asyncio.sleep(2.8)
+        na, nb, sa = len(a.starts), len(b.starts), len(a.stops)
+        a.wake(); b.wake(); await asyncio.sleep(1.5)
+        check(len(a.starts) == na and len(b.starts) == nb and len(a.stops) == sa and "with priority: busy or ringing" in b.text(),
+              "a follow-up of a conversation keeps the next wake word against a better score")
+        a.end_pipeline(); await asyncio.sleep(0.5)
+        # (4) a ringing timer too
+        a.cli.send_voice_assistant_timer_event(Tm.VOICE_ASSISTANT_TIMER_FINISHED, "t1", "tea", 60, 0, False); await asyncio.sleep(0.5)
+        na, nb = len(a.starts), len(b.starts)
+        a.wake(); b.wake(); await until(lambda: len(a.starts) == na + 1, 3); await asyncio.sleep(0.5)
+        check(len(a.starts) == na + 1 and len(b.starts) == nb, "a ringing timer keeps the next wake word against a better score")
+        sa = len(a.stops); a.stop(); await until(lambda: len(a.stops) > sa, 2)
+        check("alarm: off (stop)" in a.text() and True in [x for _, x in a.stops[sa:]], "\"<wake word>, stop\": the ring and the run it opened end")
+        await asyncio.sleep(0.5)
+        # (5) off: as before, the listening Echo keeps the wake word
+        for e in (a, b): e.page.set(arbitration_takeover="off")
+        await listening(a); na, nb, sa, ta = len(a.starts), len(b.starts), len(a.stops), took(a)
+        a.wake(); b.wake(); await asyncio.sleep(1.5)
+        check(len(a.starts) == na and len(b.starts) == nb and len(a.stops) == sa and took(a) == ta,
+              "takeover off: the listening Echo keeps the wake word")
+        a.end_pipeline(); await asyncio.sleep(0.5)
+        for e in (a, b): e.page.set(arbitration_takeover="on")
+
+        # "<wake word>, stop" (arbitration_takeover too): the run that wake word opened ends quietly, or never starts
+        nb, sb = len(b.starts), len(b.stops)
+        b.wake(); await until(lambda: len(b.starts) == nb + 1, 3); t = time.monotonic(); b.stop()
+        await until(lambda: len(b.stops) > sb, 2)
+        took_ms = (b.stops[-1][0] - t) * 1000 if len(b.stops) > sb else -1
+        check([x for _, x in b.stops[sb:]] == [True] and "stop: listening ended" in b.text(),
+              f"\"<wake word>, stop\" out of silence: the run is cancelled ({took_ms:.0f} ms from \"stop\" to Home Assistant)")
+        # both hear "<wake word>, stop": the "stop" comes during the round, nothing starts anywhere (or starts and ends)
+        await asyncio.sleep(0.5); na, nb, sa, sb = len(a.starts), len(b.starts), len(a.stops), len(b.stops)
+        a.wake(); b.wake(); await asyncio.sleep(0.05); a.stop(); b.stop(); await asyncio.sleep(1.5)
+        check(len(a.starts) - na == len(a.stops) - sa and len(b.starts) - nb == len(b.stops) - sb,
+              f"both heard \"<wake word>, stop\": no run left ({len(a.starts) - na}/{len(b.starts) - nb} started)")
+        # a run that only listens, then "<wake word>, stop": cancelled, and nothing listens anew
+        await listening(a); na, sa = len(a.starts), len(a.stops)
+        a.wake(); await asyncio.sleep(0.05); a.stop(); await asyncio.sleep(1.5)
+        check(len(a.starts) == na and [x for _, x in a.stops[sa:]] == [True], "listening, then \"<wake word>, stop\": the run ends, none listens anew")
+        # "stop" long after the wake word (the engine knows it only right behind one): nothing
+        nb, sb = len(b.starts), len(b.stops); b.wake(); await until(lambda: len(b.starts) == nb + 1, 3); await asyncio.sleep(4.5)
+        b.stop(); await asyncio.sleep(0.5)
+        check(len(b.stops) == sb, "\"stop\" 4.5 s after the wake word: the run goes on")
+        b.end_pipeline(); await asyncio.sleep(0.5)
+        # off: "<wake word>, stop" out of silence goes to Home Assistant as before
+        b.page.set(arbitration_takeover="off")
+        nb, sb = len(b.starts), len(b.stops); b.wake(); await until(lambda: len(b.starts) == nb + 1, 3); b.stop(); await asyncio.sleep(0.5)
+        check(len(b.stops) == sb, "takeover off: \"<wake word>, stop\" out of silence is a command for Home Assistant")
+        b.end_pipeline(); b.page.set(arbitration_takeover="on"); await asyncio.sleep(0.5)
 
         # Media in the room (main.c wake_heard): the kitchen Echo (500) hears worse than the living room one (900), but a
         # Sonos plays beside it.  The players are a setting of each Echo; Home Assistant sends their states, over the keyed
