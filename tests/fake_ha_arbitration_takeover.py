@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Wake word arbitration (tests/arbecho.py), the takeover (main.c trigger, setting arbitration_takeover): an Echo that
-only listens after a wake word of its own gives way to a new wake word another Echo heard better, once its run is
-2.5 s old; a follow-up of a conversation and a ringing timer keep it; a wake word it did not hear leaves it alone.  And
+only listens (or thinks) after a wake word of its own gives way to a new wake word another Echo heard better, once its
+run is 2 s old; a follow-up of a conversation and a ringing timer keep it; a wake word it did not hear leaves it alone.  And
 "<wake word>, stop" (SIGHUP here) ends listening quietly, or keeps the round's winner from starting; off: as before."""
 import asyncio, os, time
 from aioesphomeapi import VoiceAssistantEventType as Ev, VoiceAssistantTimerEventType as Tm
@@ -17,7 +17,7 @@ async def main():
     check(await until(lambda: a.st("arbitration_peers") == 1 and b.st("arbitration_peers") == 1, 10), "both in one network")
 
     # Takeover (main.c trigger, arbitration_takeover): a run the Echo's own wake word opened has no priority once it
-    # has listened for 2.5 s, and ends quietly (start=false, no new run) when another Echo takes a wake word it heard too
+    # has listened for 2 s, and ends quietly (start=false, no new run) when another Echo takes a wake word it heard too
     async def listening(e, secs=2.8):               # a wrong wake-up: the run listens on
         n = len(e.starts); e.wake(); await until(lambda: len(e.starts) == n + 1, 3); await asyncio.sleep(secs)
     def took(e): return e.text().count("takeover: ")
@@ -35,19 +35,28 @@ async def main():
     check(len(b.starts) == nb + 1 and len(a.stops) == sa and took(a) == ta,
           "takeover: only the other Echo heard it; this one listens on")
     a.end_pipeline(); b.end_pipeline(); await asyncio.sleep(0.5)
-    # ...and a run younger than 2.5 s keeps the wake word (Home Assistant would refuse a new run: one start per wake
+    # ...and a run younger than 2 s keeps the wake word (Home Assistant would refuse a new run: one start per wake
     # word in 2 s)
     await listening(a, 0.8); na, nb, sa, ta = len(a.starts), len(b.starts), len(a.stops), took(a)
     a.wake(); b.wake(); await asyncio.sleep(1.5)
     check(len(a.starts) == na and len(b.starts) == nb and len(a.stops) == sa and took(a) == ta,
-          "takeover: a run younger than 2.5 s keeps the wake word and listens on")
+          "takeover: a run younger than 2 s keeps the wake word and listens on")
     a.end_pipeline(); await asyncio.sleep(0.5)
     # the listening Echo hears the new wake word alone: it listens anew from it
     await listening(a); na, sa = len(a.starts), len(a.stops)
     a.wake(); await until(lambda: len(a.starts) == na + 1, 3); await asyncio.sleep(0.3)
     check(len(a.starts) == na + 1 and [x for _, x in a.stops[sa:]] == [True] and "wake word: pipeline cancelled" in a.text(),
-          "takeover: its own wake word again after 2.5 s: the run is cancelled and a new one listens")
+          "takeover: its own wake word again after 2 s: the run is cancelled and a new one listens")
     a.end_pipeline(); await asyncio.sleep(0.5)
+    # (1b) THINKING counts as listening: a wake that heard nothing thinks after a second or two, just when its talker
+    # calls from the next room (2026-10-19 21:06:09)
+    n = len(a.starts); a.wake(); await until(lambda: len(a.starts) == n + 1, 3)
+    a.cli.send_voice_assistant_event(Ev.VOICE_ASSISTANT_STT_VAD_END, None); await asyncio.sleep(2.3)
+    na, nb, sa, ta = len(a.starts), len(b.starts), len(a.stops), took(a)
+    a.wake(); b.wake(); await until(lambda: len(b.starts) == nb + 1 and len(a.stops) > sa, 3); await asyncio.sleep(0.5)
+    check(len(b.starts) == nb + 1 and len(a.starts) == na and [x for _, x in a.stops[sa:]] == [True] and took(a) == ta + 1,
+          "takeover: a run that thinks after a wake word of its own gives way too")
+    b.end_pipeline(); await asyncio.sleep(0.5)
     # (3) a follow-up of a conversation (continue_conversation, started by the Echo itself) keeps its priority
     n = len(a.starts); a.wake(); await until(lambda: len(a.starts) == n + 1, 3)
     a.cli.send_voice_assistant_event(Ev.VOICE_ASSISTANT_INTENT_END, {"conversation_id": "x", "continue_conversation": "1"})
@@ -90,6 +99,18 @@ async def main():
     await listening(a); na, sa = len(a.starts), len(a.stops)
     a.wake(); await asyncio.sleep(0.05); a.stop(); await asyncio.sleep(1.5)
     check(len(a.starts) == na and [x for _, x in a.stops[sa:]] == [True], "listening, then \"<wake word>, stop\": the run ends, none listens anew")
+    # thinking, then "<wake word>, stop": the wake word cancels and listens anew, its "stop" drops that run, cancelled
+    # (not ended): Home Assistant's late STT_START must not open listening again (2026-10-19 21:07:11, "Stopp." paused
+    # the living room's music)
+    n = len(a.starts); a.wake(); await until(lambda: len(a.starts) == n + 1, 3)
+    a.cli.send_voice_assistant_event(Ev.VOICE_ASSISTANT_STT_VAD_END, None); await asyncio.sleep(0.5)
+    na = len(a.starts); a.wake(); await until(lambda: len(a.starts) == na + 1, 3)
+    sa, log = len(a.stops), len(a.text()); a.stop(); await until(lambda: len(a.stops) > sa, 2)
+    a.cli.send_voice_assistant_event(Ev.VOICE_ASSISTANT_STT_START, None); await asyncio.sleep(0.5)
+    after = a.text()[log:]
+    check("stop: pipeline dropped" in after and [x for _, x in a.stops[sa:]] == [True] and "-> listening" not in after,
+          "thinking, then \"<wake word>, stop\": the new run is cancelled and nothing listens again")
+    a.end_pipeline(); await asyncio.sleep(0.5)
     # "stop" long after the wake word (the engine knows it only right behind one): nothing
     nb, sb = len(b.starts), len(b.stops); b.wake(); await until(lambda: len(b.starts) == nb + 1, 3); await asyncio.sleep(4.5)
     b.stop(); await asyncio.sleep(0.5)

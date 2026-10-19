@@ -993,15 +993,17 @@ static void quiet_cancel(void)
  * kitchen's command).  So a run this Echo's own wake word opened has no priority while it only listens: a new wake
  * word goes to whichever Echo heard it best, and this one ends its run quietly when it heard that wake word too and
  * lost the round (lost); when it wins, it listens anew from that wake word.  Not when it did not hear it: another
- * Echo's "answers" alone would let an "Alexa" upstairs end a real command downstairs.  Follow-ups of a conversation,
- * the button's runs, THINKING and SPEAKING keep it (another Echo answering then would talk over the reply), and so does
- * a run younger than TAKEOVER_MS: Home Assistant takes one start per wake word in 2 s (WAKE_WORD_COOLDOWN, counted
- * from the last start), so a takeover sooner would leave the new run refused and nobody listening; the margin covers
- * the round and the way to Home Assistant.  Lock held */
-#define TAKEOVER_MS 2500
+ * Echo's "answers" alone would let an "Alexa" upstairs end a real command downstairs.  THINKING counts as listening
+ * here: a wake that heard nothing goes to THINKING after a second or two, just when its talker calls from the next room
+ * (2026-10-19 21:06:09).  Follow-ups of a conversation, the button's runs and SPEAKING keep it (another Echo answering
+ * then would talk over the reply), and so does a run younger than TAKEOVER_MS: Home Assistant takes one start per wake
+ * word in 2 s (WAKE_WORD_COOLDOWN, counted from the last start).  Measured at the claim, which is a round's window
+ * (~0.5 s) before the winner starts: 2.5 s left a talker who called again at once with the wrong Echo twice in a row
+ * (21:06:12), each win starting its run anew.  Lock held */
+#define TAKEOVER_MS 2000
 static int takeable(void)
 {
-    return takeover && core_local_wake && state == LISTENING && run_wake_ms && !atomic_load(&alarm_on)
+    return takeover && core_local_wake && (state == LISTENING || state == THINKING) && run_wake_ms && !atomic_load(&alarm_on)
            && mono_ms() - run_wake_ms >= TAKEOVER_MS;
 }
 
@@ -1089,9 +1091,11 @@ static void stop_word(void)
     } else if (state == LISTENING && mono_ms() - wake_cut_ms < 4000) {
         fprintf(stderr, "stop: pipeline dropped\n");
         atomic_fetch_and(&sounds_pending, ~(1 << SND_WAKE | 1 << SND_TOUCH));
-        barge_in = 0;
-        core_pipeline_finish();
-        quiet_abort = 1;
+        /* With arbitration_takeover cancelled, not ended: an ended run's audio still goes to speech to text, and Home
+         * Assistant's STT_START put the Echo back to listening; "Stopp." then paused the living room's music
+         * (2026-10-19 21:07:11) */
+        if (takeover) quiet_cancel();
+        else { barge_in = 0; core_pipeline_finish(); quiet_abort = 1; }
     } else {
         int quiet = state == LISTENING && stopped_now();
         if (!ended && atomic_load(&music_on) && music_stop()) fprintf(stderr, "stop: music paused%s\n", quiet ? "" : ", the pipeline goes on");
