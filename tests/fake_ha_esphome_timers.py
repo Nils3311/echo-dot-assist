@@ -53,7 +53,8 @@ async def main(e):
     cli.send_voice_assistant_timer_event(Tm.VOICE_ASSISTANT_TIMER_FINISHED, "t7", "tea", 60, 0, False)
     await until(lambda: ringing() == (True, "tea"))
     started.clear(); stopped.clear(); proc.send_signal(signal.SIGUSR1); await asyncio.wait_for(started.wait(), 5)
-    cli.send_voice_assistant_event(Ev.VOICE_ASSISTANT_STT_START, None)
+    cli.send_voice_assistant_event(Ev.VOICE_ASSISTANT_RUN_START, None)     # as Home Assistant: after a cancelled run
+    cli.send_voice_assistant_event(Ev.VOICE_ASSISTANT_STT_START, None)     # (stop above) hassmic waits for it
     cli.send_voice_assistant_event(Ev.VOICE_ASSISTANT_STT_END, {"text": "what time is it"})
     await sync(cli); await asyncio.sleep(0.3)
     check(ringing() == (True, "tea") and not stopped, f"another question during a ring leaves it ringing: {ringing()}, stops {stopped}")
