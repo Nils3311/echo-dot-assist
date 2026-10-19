@@ -1048,6 +1048,35 @@ Run in this order. Each step says what it proves.
       <dBFS>` on every round's `arbitration:` line. Room = the processed mic stream in 100 ms frames (`room_put` in the
       capture thread, two atomics): mean square of the last 1 s, floor = 20th percentile of the last 5 s. HA's state
       comes after the music is audible, so the 1 s before a start can hold music already; the floor is the baseline.
+- [x] Takeover and "<wake word>, stop" ends listening (2026-10-19; on main with #44 as `sofort-stopp-main`). The case:
+      the living room woke up wrongly (children, TV) and listened up to 15 s (HA's VAD limit, `assist_pipeline/vad.py`);
+      it claimed every wake word meanwhile with prio 2 (`state != IDLE`), which beats any score, and in `trigger()`
+      LISTENING without the button had no branch: the kitchen's "Alexa" was lost (2026-10-18 18:16:30, the kitchen's
+      command went into the living room's stream). Now (setting `arbitration_takeover`, on, Voice, page only,
+      exported): a run of this Echo's own wake word (`run_wake_ms`; not a follow-up of `continue_conversation` /
+      `start_conversation`, not the button, not `-w remote`) that only listens and is older than `TAKEOVER_MS` 2.5 s
+      claims prio 0 (`takeable`); losing a round for a wake word it heard itself (`lost`, same wake word, hassmic mode)
+      ends it quietly (`quiet_cancel`: start=false, HA `_abort_pipeline`, `quiet_abort`); winning cancels it and
+      listens anew from the new wake word. Another Echo's "answers" for a wake word this one did not hear does nothing
+      (the owner's decision: an "Alexa" upstairs must not end a real command downstairs), so the living room that did
+      not hear the kitchen listens on to its end. THINKING and SPEAKING keep prio 2: another Echo answering would talk
+      over the reply, and the wake word there already cuts and listens again at the same Echo. 2.5 s: HA takes one
+      start per wake word in 2 s (`WAKE_WORD_COOLDOWN`, global, from the last start), a takeover sooner leaves the new
+      run refused and nobody listening; it also keeps a fresh run from being taken by a second detection of its own
+      wake word. Symmetric: every Echo decides from the same claims, wire unchanged. Same setting (one switch, the
+      owner's wish), "<wake word>, stop" (the owner's decision 2026-10-19): a "stop" after the last detection
+      (`heard_ms`, 4 s) drops a LISTENING run (also one this wake word just opened, also a follow-up) and keeps the
+      round's winner from starting (`stopped_now`: "stop" came during the round); a takeover or THINKING cancel does
+      not listen anew then. Drop In, alarm, reply and the Echo's own music (#51, paused) as before, then the run ends. Pryon's STOP
+      threshold (`alexa-de-DE` kw.cfg.json: 0.4, ALEXA 0.7028) is in the model; at run time only client properties
+      switch the model's own overrides, so no setting (a changed kw.cfg.json would be a patch of the model). The living
+      room's log 2026-10-12..19: 24 STOP in 700 wake words, 13 where it answered, 2 false ("Alexa, leiser"); STOP begins
+      a median 0.25 s before ALEXA ends; the new drop cancels as the button does (start=false only), the old one (a
+      run the wake word opened by cutting a reply or a ring) is unchanged. Off: as before. `fake_ha_arbitration_takeover.py` (arb-takeover): both hear / only the other hears / younger than 2.5 s / own
+      wake word again / follow-up keeps it / ringing keeps it / off; stop out of silence, both Echos hear stop, listening
+      + wake word + stop, stop after 4.5 s, off. `fake_ma_sendspin.py`: #51's checks with the setting off, and on: music
+      paused and the run cancelled. `tests/arbecho.py` sends RUN_START as HA does (after a cancel the Echo waits for it).
+      Not measured on the Echos.
 - [x] Stale `-m` after the wake word migration (2026-10-06, donut kept going back to Alexa): `artifact-install.sh
       migrate` renamed `models/echo-de` to `echo-de-DE` and moved `state/wake_word`, but hassmic.conf kept
       `ARGS="-m .../models/echo-de/pryon.manifest"`; `wake_words_scan` added the -m path unchecked, so HA's select had two

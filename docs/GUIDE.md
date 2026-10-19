@@ -39,6 +39,11 @@ System) off takes any certificate, but then anyone on your network could slip th
   microWakeWord or Home Assistant's wake word (no "stop" keyword), a request that is only "stop" does the same: the
   music pauses and Home Assistant gets no request. A phone without remote control (AVRCP) goes silent instead, until
   it starts playing again; the button cannot resume it.
+  With "A new wake word or stop ends listening" (Voice, on by default) "Alexa, stop" means "be quiet": after all of
+  the above the Echo also stops listening at once and sends nothing to Home Assistant, or does not start at all when it
+  hears both words together; "Alexa, stop the timer" then needs the timer's own words without "stop", and media Home
+  Assistant plays elsewhere is paused with "Alexa, pause". The engine now and then hears "stop" in a command ("Alexa,
+  leiser", about 2 in 350 answers): that command is lost, say it again. Off, everything above is as described first.
 - While a timer rings or something plays, the wake word is accepted more readily, as Amazon's models are tuned to do.
 - A finished timer rings for a minute ("Timers ring for" on the [settings page](#settings-page): 10 s to 10 min, or
   until stopped), with the cyan timer animation on the ring. Only an explicit stop ends it: "<wake word>, stop", the
@@ -129,7 +134,7 @@ satellite for a few seconds. `-w remote` in [`ARGS`](#hassmicconf) does the same
 ## Several Echos
 
 The Echos compare by how clearly the word stood out of the room's noise. An Echo in a conversation, or ringing, keeps
-the next wake word. With only one Echo there is no delay. The wait delays only the sound and the ring, not what you
+the next wake word (but one that only listens gives way, below). With only one Echo there is no delay. The wait delays only the sound and the ring, not what you
 say: the Echo that answers sends Home Assistant everything from the end of the wake word, so speak on without a pause.
 
 - Only Echos listening for the same word compete: one on "Echo" and one on "Alexa" each answer their own.
@@ -137,6 +142,18 @@ say: the Echo that answers sends Home Assistant everything from the end of the w
   wake word itself but stays in the Echos' network, so the settings pages still find it.
 - Other satellites (ESP32 and so on) are not part of it. Home Assistant lets the first to report answer, and an Echo
   that comes second just goes quiet instead of flashing an error.
+
+**An Echo that woke up by mistake.** One that the TV or children in another room woke up listens for up to 15 s.
+Once it has listened for 2.5 s it no longer keeps the next wake word: when it hears your "Alexa" too and another Echo
+heard it better, it stops quietly (Home Assistant drops its run, nothing of it is carried out) and that Echo answers,
+within about the round's wait; when it heard you best itself, it starts listening afresh from your wake word. A wake
+word it did not hear leaves it alone, so an "Alexa" upstairs never ends a command downstairs; it then listens on to
+its end. A follow-up question of a conversation, a reply being worked on or spoken, a ringing timer and a run started
+with the action button keep the next wake word as before; so does a run younger than 2.5 s, since Home Assistant
+takes only one start per wake word in 2 s. "A new wake word or stop ends listening" on the settings page (Voice, on by
+default) switches it off together with "Alexa, stop" ending listening; set the same on every Echo, and update them
+all at once: an older Echo still keeps every wake word while it listens. The log says `takeover: another Echo heard
+the wake word better, pipeline cancelled`.
 
 **How long they wait.** An Echo decides as soon as every other Echo's claim is in. Only when one did not hear you does
 it wait out its window, which it learns from your network: how late the other Echos' claims reach it. The window is

@@ -57,6 +57,7 @@ class Echo:
             with open(os.path.join(self.state, "arbitration"), "w") as f:
                 f.write(f"join 1\nctr 0\nnet {nid:016x} {base64.b64encode(key).decode()}\n")
         self.starts, self.states, self.allowed, self.chunks = [], {}, True, []
+        self.stops = []                                     # (when, abort): the Echo ended a run (abort: start=false)
         self.sendspin = 0                                   # -z: Sendspin's port, 0 none
 
     def start(self):
@@ -70,6 +71,7 @@ class Echo:
         except (OSError, AttributeError): return None
     def st(self, oid): return self.states.get(self.by[oid].key) if oid in self.by else None
     def wake(self): self.proc.send_signal(signal.SIGUSR1)
+    def stop(self): self.proc.send_signal(signal.SIGHUP)            # Pryon's "stop" right behind the wake word
     def pair(self): self.proc.send_signal(signal.SIGWINCH)          # Volume up + Volume down held
     def pub(self):                              # the arbitration identity's public key, from its private one
         sk = base64.b64decode(open(os.path.join(self.state, "arb_key")).read().strip())
@@ -103,8 +105,10 @@ class Echo:
         self.cli.subscribe_states(lambda s: self.states.__setitem__(s.key, getattr(s, "state", None)))
         self.cli.subscribe_home_assistant_states_and_services(on_state=lambda s: None, on_service_call=lambda c: ha.action(self, c),
                                                               on_state_sub=lambda e, a: ha.sub(self, e, a), on_state_request=lambda e, a: ha.state(self, e, a))
-        async def handle_start(conv, flags, settings, phrase): self.starts.append(time.monotonic()); self.chunks = []; return 0
-        async def handle_stop(abort): pass
+        async def handle_start(conv, flags, settings, phrase):     # RUN_START as Home Assistant's pipeline sends it: after a
+            self.starts.append(time.monotonic()); self.chunks = []    # cancel the Echo waits for it before it takes events again
+            self.cli.send_voice_assistant_event(Ev.VOICE_ASSISTANT_RUN_START, None); return 0
+        async def handle_stop(abort): self.stops.append((time.monotonic(), abort))
         async def handle_audio(data, *_): self.chunks.append(len(data))
         self.cli.subscribe_voice_assistant(handle_start=handle_start, handle_stop=handle_stop, handle_audio=handle_audio)
 

@@ -47,7 +47,7 @@ aioesphomeapi, wyoming, aiosendspin, noiseprotocol, aiohttp):
 .venv/bin/python tests/fake_ha_esphome_buttons.py  #   runs cancelled while HA thinks or streams, the "Button" event entity
 .venv/bin/python tests/fake_ha_esphome_address.py  #   a new address: links closed, mDNS announced again
 .venv/bin/python tests/fake_ha_arbitration.py # two Echos under one fake HA: wake word arbitration, join paths and security
-                                             # (_join, _rounds, _kiosk, _window, _media.py beside it; tests/arbecho.py)
+                                             # (_join, _rounds, _kiosk, _window, _media, _takeover.py beside it; tests/arbecho.py)
 .venv/bin/python tests/fake_ha_dropin.py      # Drop In between two Echos: call, answer, hang-up paths, refusals, lost peer,
                                              # the ringtone at the sounds volume (HASSMIC_EARCONS: stand-in stock sounds)
 .venv/bin/python tests/blueprint_dropin.py    # the Drop In voice blueprint against stand-ins of HA's registries, states,
@@ -219,6 +219,12 @@ No model `#ifdef`s in shared code: new differences become a board field, a `devi
   until 1.5 s; last 64 as `delay <id> <ms>` lines in `state/arbitration`): 95th percentile + 50 ms over the members
   counted and per member, 150-1000 ms, 500 until 10 samples; setting `arbitration_window_auto` (off: `arbitration_window`).
   The capture thread decides early once every member that takes part claimed or one beat us (`arb_settled`).
+  Takeover (`main.c` above `trigger`, setting `arbitration_takeover`, Voice, page only, exported): a run this Echo's
+  own wake word opened (`run_wake_ms`, not a follow-up/button/-w remote) that only listens and is older than
+  `TAKEOVER_MS` (2.5 s: HA's `WAKE_WORD_COOLDOWN` 2 s) claims prio 0 (`takeable`), ends quietly (`quiet_cancel`:
+  `proto->cancel`, `quiet_abort`) when it loses a round for a wake word it heard (`lost`; never on another Echo's
+  "answers" alone), and listens anew when it wins.  The same setting: "<wake word>, stop" (`stop_word`) after `heard_ms`
+  (the last detection) drops a LISTENING run or keeps the round's winner from starting (`stopped_now`).
   The network (beacons, key handoff, pairing; tags and action) always runs: the settings pages find each other
   through it. The `arbitration` setting (`arb_arbitrate`) only gates rounds; off, the beacon carries a flags byte after
   the counter and members leave that Echo out of rounds (older builds reject the longer beacon, same effect).
