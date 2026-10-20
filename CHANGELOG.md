@@ -2,6 +2,14 @@
 
 What changed for people using the Echo, newest first. Details and measurements are in [PLAN.md](PLAN.md).
 
+## 2026-10-20
+
+- **"Alexa, stop" right after a reply, a ring or a busy Echo drops its run for good.** When the wake word cut a reply
+  or a ringing timer (or a request still being worked on) and "stop" followed, the Echo ended the new run instead of
+  cancelling it: the Echo could show listening again a moment later with its microphone closed, and once Home
+  Assistant even carried out the "stop" (it paused music on another speaker). It is now cancelled the way the action
+  button cancels a run.
+
 ## 2026-10-19
 
 - **No more "Ja." when you pause after the wake word.** Since the Echo sends what you say right after the wake word,
