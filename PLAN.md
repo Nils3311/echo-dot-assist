@@ -2099,6 +2099,25 @@ Run in this order. Each step says what it proves.
       Wyoming has no `cancel`: ended there as before.  Tests: fake_ha_esphome_timers.py (ring + wake word + stop: one
       abort, a late STT_START leaves the Echo idle, the next wake word starts a run; red before), fake_ha_esphome.py
       (reply cut + stop: one abort).
+- [x] "<wake word>, stop" ends listening (2026-10-20; setting `stop_ends_listening`, Voice, page only, exported, off
+      by default).  The case: an Echo that woke wrongly (TV, talk in the room) listens up to 15 s (HA's VAD limit,
+      `assist_pipeline/vad.py`) and HA carries out what STT made of it; the only quiet way out was the action button.
+      In `stop_word`, after #51's stop (Drop In, ring, reply, the Echo's own music; `ended`), a "stop" after the last
+      detection (`heard_ms`, set in `on_wake` and for SIGUSR1; `stop_ms`; `stopped_now`: within 4 s) cancels a
+      LISTENING run as the button does (`quiet_cancel`; `stop: listening ended`), also one that listened before this
+      wake word (in LISTENING `trigger` has no branch for the wake word, so that run goes on otherwise), and `trigger`
+      starts nothing when the "stop" came during the round (`stop: came during the round, nothing started`), nor
+      listens anew after cancelling a THINKING run.  The run the wake word opened by cutting a reply or ring keeps the
+      `pipeline dropped` branch (cancelled since the entry above).  Pryon's STOP threshold is the model's (`alexa-de-DE`
+      kw.cfg.json: 0.4), not settable at run time.  One Echo's log over 7 days: STOP in 24 of 700 wake words, 2 of them
+      false in 354 requests that Echo answered (a short command heard as "stop": lost, said again).  Off: as before.
+      ESPHome only (Wyoming has no cancel).  Tests: `fake_ha_stop_word.py` (stop-word; off: a run goes on, the
+      THINKING drop cancelled; on: out of silence, during the round, both Echos, listening + wake word + stop, thinking
+      + wake word + stop with and without the new run started, stop after 4.5 s), `fake_ma_sendspin.py` (#51's part
+      off, and on: music paused and the run cancelled).  `tests/arbecho.py` sends RUN_START as HA does (after a cancel
+      the Echo waits for it).  This build not on an Echo yet; the same stop logic (in a fork, beside other changes) ran on
+      three Echo Dot 2s: listening ended 5-7 ms after Pryon's STOP (which comes ~0.12-0.14 s after the word's end),
+      no sound, no run left.
 - [x] Wake word turns that hear nothing (2026-10-19, GitHub issue #48; two Dot 2 on 2026.10.17.151309: 4
       `stt-no-text-recognized` in 5 days, each with `anim_start_error_short`).  That code (HA's STT returned no text)
       now goes to `core_no_speech`: the run ends as after RUN_END, no error ring, whoever started it (wake word,

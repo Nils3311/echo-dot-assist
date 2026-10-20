@@ -4,6 +4,12 @@ What changed for people using the Echo, newest first. Details and measurements a
 
 ## 2026-10-20
 
+- **"Alexa, stop" can end listening** ("Stop after the wake word ends listening", settings page, Voice, off by
+  default). An Echo that woke up by mistake listens for up to 15 s and Home Assistant carries out whatever it heard
+  meanwhile. With this on, "Alexa, stop" right behind the wake word makes it stop listening at once, quietly, with
+  nothing sent on to Home Assistant; said in one go, the Echo does not start at all. Timers, replies, Drop In calls and
+  music on the Echo stop as before. "Alexa, stop the timer" then no longer reaches Home Assistant, and now and then a
+  short command is heard as "stop" and has to be said again; off, everything is as before.
 - **"Alexa, stop" right after a reply, a ring or a busy Echo drops its run for good.** When the wake word cut a reply
   or a ringing timer (or a request still being worked on) and "stop" followed, the Echo ended the new run instead of
   cancelling it: the Echo could show listening again a moment later with its microphone closed, and once Home
