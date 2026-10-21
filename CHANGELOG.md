@@ -15,7 +15,7 @@ What changed for people using the Echo, newest first. Details and measurements a
 
 - **A new wake word takes over from an Echo that woke up by mistake.** An Echo that woke up wrongly (the TV, children
   in another room) listened for up to 15 s and kept every wake word said meanwhile: "Alexa" in the kitchen was lost to
-  the living room. Now, once it has listened for 2.5 s, it gives way: when it hears a new wake word that another Echo
+  the living room. Now, once it has listened (or thought) for 2 s, it gives way: when it hears a new wake word that another Echo
   heard better, it stops quietly and that Echo answers; when it heard you best itself, it listens afresh from your
   wake word. A wake word it did not hear leaves it alone (an "Alexa" upstairs does not end a command downstairs). An
   Echo in a conversation (a follow-up question), busy with a reply or ringing keeps the next wake word as before.
@@ -26,6 +26,11 @@ What changed for people using the Echo, newest first. Details and measurements a
   it again.
 - Both hang on one setting, "A new wake word or stop ends listening" (Voice), on by default; off, everything is as
   before. Update every Echo at once and set the same on each.
+- **No more "Ja." when you pause after the wake word.** Since the Echo sends what you say right after the wake word,
+  the last sound of a drawn-out "Alexaaa" could reach Home Assistant too: speech-to-text heard "Ja." or garbled the
+  first word, and when you then paused, Home Assistant took the pause for the end of your command. The Echo now
+  leaves out what still sounds like the end of the wake word (at most 0.2 s, never more than was cut before), so
+  speaking straight on and pausing both work. Thanks to Thyraz for tracking it down.
 - **Draw your own light ring animations** (issue #38). The settings page (Lights) has a designer for the ring: up
   to 100 designs of as many frames as you like, painted LED by LED or as a whole ring, with spinning, fading and
   breathing frames made for you, undo, and Amazon's animation as a start if you want it. For each of the Echo's own
