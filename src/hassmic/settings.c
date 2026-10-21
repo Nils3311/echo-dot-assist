@@ -53,7 +53,7 @@ static void path(char *out, size_t cap, const char *file) { snprintf(out, cap, "
 
 /* ---------------------------------------------------------------- the table */
 
-enum id { WAKE_ENGINE, MIC_LEVEL, DENOISE, WAKE_SOUND, WAKE_SOUND_REMOVAL, MUTE, DND, TIMER_RING, TIMER_STOP_ANY, BT_ANNOUNCE, BT_LANG, LED_AUTO, LED_LEVEL, ARB, ARB_MODE, ARB_AUTO, ARB_WINDOW, ARB_OFFSET, ARB_MEDIA_PLAYERS, ARB_MEDIA_AMBIENT, TAKEOVER, SOUND, WHISPER, WAKE_EVENTS, WIFI_MOTION,
+enum id { WAKE_ENGINE, MIC_LEVEL, DENOISE, WAKE_SOUND, WAKE_SOUND_REMOVAL, MUTE, DND, TIMER_RING, TIMER_STOP_ANY, BT_ANNOUNCE, BT_LANG, LED_AUTO, LED_LEVEL, ARB, ARB_MODE, ARB_AUTO, ARB_WINDOW, ARB_OFFSET, ARB_MEDIA_PLAYERS, ARB_MEDIA_AMBIENT, ARB_NOISE_CAP, TAKEOVER, SOUND, WHISPER, WAKE_EVENTS, WIFI_MOTION,
           WIFI_SENS, LIGHT_SENSOR, BT_AUDIO, BT_SPEAKER, BT_OUT_DELAY, BT_OUT_AWAKE, BT_OUT_STAY, DROPIN, DROPIN_ANSWER, UPDATES, HTTPS_VERIFY, SS_UNPAIRED, EQ_BASS, EQ_MID, EQ_TREBLE, SPK_GAIN, VOLUME, VOL_SPLIT,
           ASSIST_LINK, ASSIST_LEVEL, ASSIST_OFFSET, SOUNDS_LINK, SOUNDS_LEVEL, SOUNDS_OFFSET, TIMER_LINK, TIMER_LEVEL, TIMER_OFFSET,
           CALL_LINK, CALL_LEVEL, CALL_OFFSET, NSET };
@@ -88,6 +88,8 @@ static const struct setting table[NSET] = {
      * so not exported; how much the background counts is a matter of taste, best the same on every Echo */
     [ARB_MEDIA_PLAYERS] = { "arbitration_media_players", "Media players in this room", "Features", NULL, S_TEXT, 0, 0, 0, 0 },
     [ARB_MEDIA_AMBIENT] = { "arbitration_media_ambient", "Background noise while media plays", "Features", "%", S_INT, 10, 100, 1, 0 },
+    /* main.c keeps it (wake_heard, noisecap.c), the quiet level it caps at is arb.c's (learned, state/arbitration) */
+    [ARB_NOISE_CAP] = { "arbitration_noise_cap", "Cap on the room's own noise", "Features", "x", S_INT, 0, 10, 1, 0 },
     /* main.c keeps it (trigger: takeable, stop_word): best the same on every Echo of a network */
     [TAKEOVER]    = { "arbitration_takeover", "A new wake word or stop ends listening", "Voice", NULL, S_BOOL, 0, 1, 1, 0 },
     [SOUND]       = { "sound_detection", "Sound detection", "Features", NULL, S_BOOL, 0, 1, 1, 1 },
@@ -213,6 +215,7 @@ int settings_get(const struct setting *s)
     case ARB_WINDOW: return arb_window(-1);
     case ARB_OFFSET: return arb_offset(INT_MIN);
     case ARB_MEDIA_AMBIENT: return core_media_ambient(-1);
+    case ARB_NOISE_CAP: return core_noise_cap(-1);
     case TAKEOVER: return core_takeover(-1);
     case SS_UNPAIRED: return sendspin_unpaired(-1);
     case EQ_BASS: case EQ_MID: case EQ_TREBLE: return core_eq((int)(s - table) - EQ_BASS);
@@ -264,6 +267,7 @@ static void put(enum id i, int v)
     case ARB_WINDOW: arb_window(v); break;
     case ARB_OFFSET: arb_offset(v); break;
     case ARB_MEDIA_AMBIENT: core_media_ambient(v); break;
+    case ARB_NOISE_CAP: core_noise_cap(v); break;
     case TAKEOVER: core_takeover(v); break;
     case SS_UNPAIRED: sendspin_unpaired(v); break;              /* sendspin.c keeps it */
     case EQ_BASS: case EQ_MID: case EQ_TREBLE: core_set_eq(i - EQ_BASS, v); break;     /* the mixer keeps it */

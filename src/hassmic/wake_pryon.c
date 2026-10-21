@@ -4,6 +4,7 @@
  * (sound_pryon.c runs the acoustic event decoder beside them the same way). */
 #include "wake.h"
 #include <pthread.h>
+#include <ctype.h>
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <zlib.h>
@@ -38,9 +39,14 @@ static void push_props(int slot)
  * accepted as usual; nothing here uses the fingerprint (Alexa's cloud did).  Nor "WindowAverageTracker request for
  * average is before existing history": the NTT fusion sets (every en-US one, alexa-de-DE) ask their window averages
  * for the second before the model was loaded, ~390 lines in the first second after each load (biscuit, 2026-10-08),
- * none after. */
+ * none after.
+ * Let through above level 3: the engine's own line per result, "classifier_score=0.937, active_threshold=0.923,
+ * detection_type=Accept" (seen with pryon_test under qemu, never in a device log: its level is above 3).  The engine
+ * hands it to this callback whatever we keep, so it costs nothing to keep; one line per result, as "wake: .. type=".
+ * Logging only: how sure the engine was, for arbitration measures worked out offline. */
 static void on_log(int level, const char *tag, const char *msg)
 {
+    if (level > 3 && msg && strstr(msg, "classifier_score")) { fprintf(stderr, "pryon %s: %s\n", tag ? tag : "", msg); return; }
     if (level > 3 || (msg && (strstr(msg, "itmask frame indices (currentFrameIdx < wwEndFrameIdx)")
                               || strstr(msg, "WindowAverageTracker request for average is before existing history")))) return;
     fprintf(stderr, "pryon %s: %s\n", tag ? tag : "", msg ? msg : "");
@@ -52,6 +58,32 @@ static void on_log(int level, const char *tag, const char *msg)
  * {.."timestamp_before_ww_end":9559,"timestamp_before_ww_start":8823}, "has_audio_lsb_metadata":1), a fingerprint.
  * Stock hands those two numbers back to the front end before it asks for the wake word's energies (main.c). */
 static long afe_start[WAKE_SLOTS], afe_end[WAKE_SLOTS]; static atomic_int afe_known[WAKE_SLOTS];
+
+/* Logging only: the metadata's fields that may say how sure the engine was (a key with "score", "confidence" or "thresh" in
+ * it; which the JSON has is not known: FINDINGS.md shows it only in part) and the playback volume before the word.
+ * Numbers and strings only, one line, at most 400 characters */
+static void log_metadata(const char *js)
+{
+    char out[400]; size_t n = 0; const char *p = js;
+    while ((p = strchr(p, '"'))) {
+        const char *k = ++p, *e = strchr(k, '"'), *v;
+        if (!e) break;
+        p = e + 1;
+        if (*p != ':') continue;
+        v = p + 1;
+        char key[64]; size_t kl = (size_t)(e - k) < sizeof key - 1 ? (size_t)(e - k) : sizeof key - 1;
+        for (size_t i = 0; i < kl; i++) key[i] = (char)tolower((unsigned char)k[i]);
+        key[kl] = 0;
+        if (!strstr(key, "score") && !strstr(key, "confidence") && !strstr(key, "thresh") && strcmp(key, "playback_volume_before_ww_start")) continue;
+        if (*v == '{' || *v == '[') continue;
+        size_t vl = *v == '"' ? strcspn(v + 1, "\"") + 2 : strcspn(v, ",}]");
+        int w = snprintf(out + n, sizeof out - n, "%s%.*s=%.*s", n ? ", " : "", (int)(e - k), k, (int)vl, v);
+        if (w < 0 || (size_t)w >= sizeof out - n) { out[n] = 0; break; }
+        n += (size_t)w;
+    }
+    if (n) fprintf(stderr, "wake: pryon metadata: %s\n", out);
+    else fprintf(stderr, "wake: pryon metadata: no score fields (%zu bytes of JSON)\n", strlen(js));
+}
 
 static void read_metadata(int slot, const unsigned char *m, size_t n)
 {
@@ -66,6 +98,7 @@ static void read_metadata(int slot, const unsigned char *m, size_t n)
     if (inflateInit2(&z, 16 + MAX_WBITS) != Z_OK) return;
     inflate(&z, Z_FINISH); inflateEnd(&z);
     js[cap - 1 - z.avail_out] = 0;
+    log_metadata(js);
     if (!strstr(js, "\"has_audio_lsb_metadata\":1") || !(a = strstr(js, "\"timestamp_before_ww_start\":"))
         || !(b = strstr(js, "\"timestamp_before_ww_end\":"))) return;
     afe_start[slot] = atol(strchr(a, ':') + 1); afe_end[slot] = atol(strchr(b, ':') + 1);

@@ -181,6 +181,9 @@ int    core_media_players(const char *list, char *err, size_t errsz);  /* "media
 const char *core_media_list(void);                          /* the list as stored: ids, comma separated */
 const char *core_media_player(int i);                       /* the i-th id, NULL past the end */
 int    core_media_ambient(int set);                         /* 10..100 %, 100 = off; -1 reads */
+/* The noise cap (main.c wake_heard, noisecap.h): the front end's ambient counts at most this many times the Echo's
+ * learned quiet level.  0..10, 0 = off; -1 reads.  Lock held */
+int    core_noise_cap(int set);
 /* main.c trigger, stop_word (arbitration_takeover): a run that only listens after this Echo's own wake word gives way
  * to a new wake word another Echo heard better, and "<wake word>, stop" drops the run that wake word opened.  0/1; -1
  * reads.  Lock held */

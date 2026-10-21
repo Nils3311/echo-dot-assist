@@ -37,6 +37,10 @@ int  arb_mode(int set);
 int  arb_window(int set);
 int  arb_window_auto(int set);
 int  arb_wait(void);
+/* The noise cap (noisecap.h, main.c wake_heard): a round's ambientEnergy from the front end, the ambient to count
+ * (counted) and the quiet level it was capped against (quiet, 0: not learned yet); learned when no media plays here
+ * (media 0), kept in state/arbitration.  factor: the arbitration_noise_cap setting, 0 = off.  Any lock but arb's. */
+void arb_noise(int factor, double ambient, int media, double *counted, double *quiet);
 /* ARB_KIOSK: dB added to our claims' loudness (-20..20), the owner's calibration against kiosks; INT_MIN only reads */
 int  arb_offset(int set);
 /* Home Assistant ran our "arbitration_key" action: a member hands us its network.  Any lock may be held. */

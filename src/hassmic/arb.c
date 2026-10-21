@@ -126,6 +126,7 @@
 #include "hash.h"
 #include "ws.h"
 #include "statefile.h"
+#include "noisecap.h"
 #include "../third_party/monocypher.h"
 
 /* The window (above) */
@@ -239,6 +240,11 @@ static struct {
 static struct delay { uint8_t id[8]; int ms; } delays[NDELAY];         /* the window's samples: a ring, ndelay ever taken; ms -1: withdrawn */
 static unsigned ndelay;
 static int wauto = 1, wlogged;                         /* wlogged: the learned window the log told last */
+/* The noise cap's quiet level (arb_noise), saved with the window's samples; ndirty: samples to save, the last taken at
+ * nat: saved by the loop once that round is over, never by the capture thread (fsync) */
+static struct noisecap noise;
+static int ndirty;
+static long long nat;
 
 /* Kiosk Satellite mode.  kround.e and kclaims[].e: dB x 10, as on the wire */
 static int mode = ARB_HASSMIC, kwindow = 400, koffset;     /* koffset: dB */
@@ -286,6 +292,8 @@ static void save(void)
         char h[17]; if (delays[i % NDELAY].ms < 0) continue;
         hex8(h, delays[i % NDELAY].id); fprintf(f, "delay %s %d\n", h, delays[i % NDELAY].ms);
     }
+    { char q[NOISECAP_KEEP * 24]; noisecap_format(&noise, q, sizeof q); fputs(q, f); }      /* older builds skip the lines */
+    ndirty = 0;
     /* a hard reset leaves the old file or the new one ("Network") */
     if (statefile_commit(&s)) fprintf(stderr, "arbitration: cannot write %s\n", path);
 }
@@ -307,7 +315,7 @@ static void load(void)
             struct delay *d = &delays[ndelay++ % NDELAY];
             for (int i = 0; i < 8; i++) { unsigned b; sscanf(hx + 2 * i, "%2x", &b); d->id[i] = (uint8_t)b; }
             d->ms = j;
-        }
+        } else noisecap_line(&noise, line);             /* "ambient <v>": the noise cap's (arb_noise) */
     }
     crypto_wipe(line, sizeof line); crypto_wipe(k64, sizeof k64);
     fclose(f);
@@ -916,6 +924,7 @@ static void *loop(void *arg)
             struct pkt b; memcpy(b.p, copies[i].p, copies[i].n); b.n = copies[i].n; send_pkt(&b); copies[i].left--;
         }
         if (round_.open && now - round_.at >= MEASURE_MS) round_.open = 0;
+        if (ndirty && !round_.open && now - nat >= MEASURE_MS) save();     /* the noise cap's, once its round is over */
         if (!round_.open && round_.dirty) {             /* the round's samples on disk once, and the window if it moved */
             int ns, q, w = learned(now, &ns, &q);
             round_.dirty = 0; save();
@@ -1201,6 +1210,13 @@ int arb_window_auto(int set)
     int r = wauto;
     pthread_mutex_unlock(&lk);
     return r;
+}
+
+void arb_noise(int factor, double ambient, int media, double *counted, double *quiet)
+{
+    pthread_mutex_lock(&lk);
+    if (noisecap_round(&noise, factor, ambient, media, counted, quiet)) { ndirty = 1; nat = now_ms(); }
+    pthread_mutex_unlock(&lk);
 }
 
 int arb_wait(void) { pthread_mutex_lock(&lk); int r = window_now(now_ms()); pthread_mutex_unlock(&lk); return r; }

@@ -191,6 +191,16 @@ under the list whether media counts right now and why; the log has a line per wa
 (`arbitration: media of this room (media_player.kitchen_sonos playing): ambient counted at 50 %, score 1651 -> 1952`,
 or `no media of this room`).
 
+**Loud noise next to an Echo.** The same holds for noise that is no media: a cooker hood beside the kitchen Echo made
+its background six times as loud as in a quiet kitchen, and the living room Echo took a wake word said in the kitchen.
+So each Echo learns how loud its room is when quiet (the median of the background its last 64 wake words without
+media in the room came with) and counts its background at most "Cap on the room's own noise" times that level: 3 by
+default, 0 switches it off. It takes effect once 10 wake words are learned; what it learned survives restarts. Below
+3x nothing changes, music hardly ever reaches it; the media advantage above still applies on top. Only with Amazon's
+wake word engine and the Echo network's own arbitration (not microWakeWord, not Kiosk Satellite mode). The log says
+`arbitration: noise cap: ambient 103000 counted as 52008 (quiet 17336, x 3)` when it caps, and otherwise ends the
+score line with `; quiet 17336` (`; quiet not learned yet` before ten).
+
 **The shared key.** The Echos share a key so that nobody else on the network can join or silence them, and your Home
 Assistant vouches for each: every Echo reports a tag named after its key as scanned (Settings › Tags lists one "Tag
 hassmic_…" per Echo), and an Echo hands the key, encrypted, only to one whose tag Home Assistant confirms. This needs

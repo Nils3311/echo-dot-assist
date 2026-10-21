@@ -330,6 +330,8 @@ const HELP = {
       const m = state.media;
       return m && !(m.players || []).length ? h('p', { class: 'f-model' }, 'No players listed: applies to this Echo\'s own playback only.') : null;
     } },
+  arbitration_noise_cap: { parent: 'arbitration', sub: true, when: () => settingValue('arbitration_mode') !== 'kiosk',
+    help: 'Loud noise next to this Echo, such as a cooker hood, counts against it as if it were the room\'s background, and a wake word you said right in front of it can go to the next room. The Echo learns how loud its room is when quiet (from wake words heard without media playing, the last 64) and counts its background at most this many times that level. Takes effect once it has learned from 10 wake words. 0: off. Default 3; best the same on every Echo.' },
   sound_detection: { icon: 'wave', ha: ['Sound (event)'], help: 'Amazon\'s Alexa Guard model listens for smoke and CO alarms, breaking glass, barking, a crying baby, snoring, coughing, running water and beeping appliances, and Home Assistant gets each as a "Sound" event for automations.',
     note: 'Less reliable than on a stock Echo, which double-checks every hit in Amazon\'s cloud. Treat events as hints, never as a replacement for a smoke detector.',
     status: () => {
@@ -371,6 +373,7 @@ const settingValueIndex = (name) => { const s = state.settings.find((x) => x.nam
 const settingValue = (name) => { const s = state.settings.find((x) => x.name === name); return s ? (s.type === 'choice' ? s.choices[s.value] : s.value) : undefined; };
 const label = (s) => { const t = s.label.replace(/ \(experimental\)$/, '').replace(/^Equalizer /, '').replace(' with other Echos', ''); return t[0].toUpperCase() + t.slice(1); };
 const fmt = (s, v) => {
+  if (s.name === 'arbitration_noise_cap') return v ? `${v}× the quiet room` : 'off';
   if (s.name === 'timer_ring') return !v ? 'until stopped' : v < 60 ? `${v} s` : `${Math.floor(v / 60)} min${v % 60 ? ` ${v % 60} s` : ''}`;
   if (s.unit === 'dB') return `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v)} dB`;
   if (s.unit === 'dBFS') return `${v < 0 ? '−' : ''}${Math.abs(v)} dBFS`;
