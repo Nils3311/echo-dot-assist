@@ -147,6 +147,7 @@
 #include "hash.h"
 #include "ws.h"
 #include "statefile.h"
+#include "noisecap.h"
 #include "../third_party/monocypher.h"
 
 /* The window (above) */
@@ -291,6 +292,9 @@ static unsigned ndelay;
 static int wauto = 1, wlogged;                         /* wlogged: the learned window the log told last */
 static int unsaved;                                     /* rounds not on disk yet; saved_at: the last time they went */
 static long long saved_at;
+/* The noise cap's quiet level (arb_noise), saved with the window's samples (unsaved, SAVE_MS): never by the capture
+ * thread, which calls arb_noise (fsync) */
+static struct noisecap noise;
 
 /* Kiosk Satellite mode.  kround.e and kclaims[].e: dB x 10, as on the wire */
 static int mode = ARB_HASSMIC, kwindow = 400, koffset;     /* koffset: dB */
@@ -347,6 +351,7 @@ static void save(void)
         }
         fputc('\n', f);
     }
+    { char q[NOISECAP_KEEP * 24]; noisecap_format(&noise, q, sizeof q); fputs(q, f); }      /* older builds skip the lines */
     /* a hard reset leaves the old file or the new one ("Network") */
     if (statefile_commit(&s)) fprintf(stderr, "arbitration: cannot write %s\n", path);
 }
@@ -382,6 +387,7 @@ static void load(void)
             }
             if (!rv->n) memset(rv, 0, sizeof *rv);
         }
+        else noisecap_line(&noise, line);               /* "ambient <v>": the noise cap's (arb_noise) */
     }
     crypto_wipe(line, sizeof line); crypto_wipe(k64, sizeof k64);
     fclose(f);
@@ -1481,6 +1487,13 @@ int arb_derive(const char *label, unsigned char out[32])
     if (running && in_net) { crypto_blake2b_keyed(out, 32, net_key, 32, (const uint8_t *)label, strlen(label)); r = 0; }
     pthread_mutex_unlock(&lk);
     return r;
+}
+
+void arb_noise(int factor, double ambient, int media, double *counted, double *quiet)
+{
+    pthread_mutex_lock(&lk);
+    if (noisecap_round(&noise, factor, ambient, media, counted, quiet)) unsaved = 1;
+    pthread_mutex_unlock(&lk);
 }
 
 void arb_self(unsigned char id[8]) { memcpy(id, pk, 8); }

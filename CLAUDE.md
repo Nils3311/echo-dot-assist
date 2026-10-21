@@ -59,7 +59,7 @@ aioesphomeapi, wyoming, aiosendspin, noiseprotocol, aiohttp):
                                              # one too slow (HASSMIC_FAKE_ALIGN_SLOW) or busy goes by the level, the
                                              # speaker adaptation in use and saved (a German "Alexa", timed per loop)
 .venv/bin/python tests/fake_ha_arbitration.py # two Echos under one fake HA: wake word arbitration, join paths and security
-                                             # (_join, _rounds, _kiosk, _window, _afe, _media, _takeover.py beside it; tests/arbecho.py)
+                                             # (_join, _rounds, _kiosk, _window, _afe, _media, _noise, _takeover.py beside it; tests/arbecho.py)
 .venv/bin/python tests/fake_ha_dropin.py      # Drop In between two Echos: call, answer, hang-up paths, refusals, lost peer,
                                              # the ringtone at the sounds volume (HASSMIC_EARCONS: stand-in stock sounds)
 .venv/bin/python tests/blueprint_dropin.py    # the Drop In voice blueprint against stand-ins of HA's registries, states,
@@ -313,6 +313,11 @@ No model `#ifdef`s in shared code: new differences become a board field, a `devi
   `volume_level` attribute (`core_media_volume`); `media_mark` logs the room level (`room_put`/`room_str`: capture
   thread, atomics) at each change and 5 s after (`media_log_tick` in `volume_led_thread`, leaf `mlog_lock` under
   `core_lock`; `HASSMIC_MEDIA_AFTER_MS`, `HASSMIC_MEDIA_EVERY_MS`).
+  Noise cap (`noisecap.c`, pure, `make unit-noisecap`; setting `arbitration_noise_cap`, 0..10, 3, exported): in `claim`,
+  front end scores only (`afe_voice`/`afe_ambient` from `afe_thread`), ambient counted as min(ambient, cap x quiet),
+  quiet = median of the last 64 ambients of rounds without media here (`arb_noise`, `ambient <v>` lines in
+  `state/arbitration`, saved with the rest per `SAVE_MS`), none before 10; the media bonus on top.  Logging only:
+  `wake: front end json:` per reading, Pryon's `classifier_score` line and the metadata's score fields (`wake_pryon.c`).
   Takeover (`main.c` above `trigger`, setting `arbitration_takeover`, under arbitration's card, exported, on): a run this
   Echo's own wake word opened (`run_wake_ms`, `run_kw`; not a follow-up/button/-w remote) that LISTENS or THINKS and is
   older than `TAKEOVER_MS` (2 s: HA's `WAKE_WORD_COOLDOWN`) claims prio 0 (`takeable`), ends quietly (`quiet_cancel`)

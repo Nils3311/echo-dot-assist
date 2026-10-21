@@ -1314,14 +1314,19 @@ static void room_str(char *o, size_t cap)           /* any thread: "room -61.2 d
  * #77), so on a thread of its own (afe_thread).  Their ratio in dB x 100 is a signal to noise like our own score below,
  * so Echos without it (older builds, other front ends) still compare.  Reading it also puts the front end into its
  * utterance state and starts its diagnostics (FINDINGS.md "Listening mode"): afe_done() ends both.  0: not available. */
-static int afe_score(long ts, long te, int *score)  /* afe_thread */
+static int afe_score(long ts, long te, int *score, double *voice_out, double *ambient_out)  /* afe_thread */
 {
-    char buf[512]; const char *v, *a; long long t0 = mono_ms();
+    char buf[512]; const char *v, *a, *open_, *close_; long long t0 = mono_ms();
     if (!afe_arbitration(ts, te, buf, sizeof buf)) return 0;
+    /* Logging only: the whole answer once per round (the _BToA energies, the gains, the playback reference), for
+     * working out better measures offline; the tools' own words around it left out */
+    if ((open_ = strchr(buf, '{')) && (close_ = strrchr(open_, '}')))
+        fprintf(stderr, "wake: front end json: %.*s\n", (int)(close_ - open_ + 1), open_);
     if (!(v = strstr(buf, "\"voiceEnergy\":")) || !(a = strstr(buf, "\"ambientEnergy\":"))) return 0;
     atomic_store(&afe_asked, 1);
     double voice = atof(strchr(v, ':') + 1), ambient = atof(strchr(a, ':') + 1);
     *score = (int)lround(1000 * log10((voice + 1) / (ambient + 1)));
+    *voice_out = voice; *ambient_out = ambient;
     fprintf(stderr, "wake: front end: voice energy %.0f, ambient %.0f (%lld ms)\n", voice, ambient, mono_ms() - t0);
     return 1;
 }
@@ -1348,6 +1353,7 @@ static int wake_score(uint64_t begin, uint64_t end, int simulated)
 #define AFE_WAIT_MS 500
 static atomic_int afe_busy;                         /* a reading runs (afe_thread) */
 static atomic_int afe_got;                          /* its score; INT_MIN: none */
+static double afe_voice, afe_ambient;               /* its energies (claim's noise cap): written before afe_busy goes 0 */
 static long afe_ts, afe_te;                         /* the keyword's place on the front end's clock, set before it starts */
 static long long score_due;                         /* capture thread: the claim waits for the reading until then */
 static struct { uint64_t end; int own, prio; char kw[64]; } pend;   /* capture thread: the wake word that waits */
@@ -1357,7 +1363,7 @@ static void *afe_thread(void *arg)
 {
     int score;
     (void)arg;
-    atomic_store(&afe_got, afe_score(afe_ts, afe_te, &score) ? score : INT_MIN);
+    atomic_store(&afe_got, afe_score(afe_ts, afe_te, &score, &afe_voice, &afe_ambient) ? score : INT_MIN);
     atomic_store(&afe_busy, 0);                     /* last: once it is 0, afe_asked says what the reading did */
     return NULL;
 }
@@ -1743,6 +1749,7 @@ struct media_player { char id[96], st[16]; int active, known, vol, vol_known; lo
                                                     since: it was subscribed on a keyed link (0: not on any); st: HA's last
                                                     state, vol: its volume_level x 1000, both for the media log only */
 static struct media_player room[MEDIA_MAX];
+static int noise_cap = 3;                           /* arbitration_noise_cap (claim, noisecap.c) */
 static int nroom, media_ambient = 50, media_linked;  /* media_linked: a keyed link follows the room's players */
 static char media_ids[SETTINGS_TEXT_MAX + 1];
 static atomic_llong own_ended;                      /* mono_ms our own music (Sendspin, Bluetooth) last stopped; 0: never */
@@ -1888,6 +1895,7 @@ int core_media_players(const char *list, char *err, size_t errsz)
 const char *core_media_list(void) { return media_ids; }
 const char *core_media_player(int i) { return i >= 0 && i < nroom ? room[i].id : NULL; }
 int core_media_ambient(int set) { if (set >= 10 && set <= 100) media_ambient = set; return media_ambient; }
+int core_noise_cap(int set) { if (set >= 0 && set <= 10) noise_cap = set; return noise_cap; }
 
 /* playing and buffering count; anything else (paused, idle, on, off, standby, unavailable, unknown) is over, and counts
  * MEDIA_HOLD_MS more only if it played before: a TV that is merely on says nothing about the room */
@@ -2013,16 +2021,31 @@ static void answer(uint64_t from)                   /* capture thread: act on th
  * (10 %).  On the wire it is only a higher score: claims keep their format, older Echos compare the number, and a
  * member could always claim any score.  An Echo in a conversation or ringing still claims priority 2, which no score
  * beats; so does one Home Assistant plays media on (play_media: state not IDLE), as before, but not one that only
- * listens after a wake word of its own (takeable, arbitration_takeover): there the score decides, media included. */
-static void claim(const char *kw, int score, int prio, uint64_t end)   /* capture thread */
+ * listens after a wake word of its own (takeable, arbitration_takeover): there the score decides, media included.
+ * Before the media bonus, the noise cap (noisecap.c, arbitration_noise_cap): the front end's ambient counts at most
+ * 3x this Echo's learned quiet level, so that its own cooker hood does not hand the wake word to the next room.
+ * voice, ambient: the front end's energies when the score is theirs, else ambient -1 */
+static void claim(const char *kw, int score, int prio, uint64_t end, double voice, double ambient)   /* capture thread */
 {
-    { char why[160], fl[48]; pthread_mutex_lock(&core_lock); int pct = media_ambient, here = media_here(why, sizeof why); pthread_mutex_unlock(&core_lock);
+    { char why[160], fl[48], qs[48] = ""; pthread_mutex_lock(&core_lock); int pct = media_ambient, cap = noise_cap, here = media_here(why, sizeof why); pthread_mutex_unlock(&core_lock);
       int f = atomic_load(&floor_cdb);            /* the media log's: the room of the last 5 s, the wake word mostly above it */
       if (f == INT_MIN) fl[0] = 0; else snprintf(fl, sizeof fl, "; room floor %.1f dBFS", f / 100.0);
-      if (!here) fprintf(stderr, "arbitration: no media of this room: score %d%s\n", score, fl);
-      else if (pct >= 100) fprintf(stderr, "arbitration: media of this room (%s), setting off: score %d%s\n", why, score, fl);
+      /* The noise cap (noisecap.c), on the front end's energies only: the mic stream's own score (no front end times,
+       * or no reading in time) measures the half second before the word on the processed stream, a scale the learned
+       * ambient is not on, and Kiosk Satellite mode's loudness is compared with kiosks, which have no such cap */
+      if (ambient >= 0) {
+          double counted, quiet;
+          arb_noise(cap, ambient, here, &counted, &quiet);
+          if (counted < ambient) {
+              fprintf(stderr, "arbitration: noise cap: ambient %.0f counted as %.0f (quiet %.0f, x %d)\n", ambient, counted, quiet, cap);
+              score = (int)lround(1000 * log10((voice + 1) / (counted + 1)));
+          } else if (quiet > 0) snprintf(qs, sizeof qs, "; quiet %.0f", quiet);
+          else snprintf(qs, sizeof qs, "; quiet not learned yet");
+      }
+      if (!here) fprintf(stderr, "arbitration: no media of this room: score %d%s%s\n", score, fl, qs);
+      else if (pct >= 100) fprintf(stderr, "arbitration: media of this room (%s), setting off: score %d%s%s\n", why, score, fl, qs);
       else { int bonus = (int)lround(1000 * log10(100.0 / pct));
-             fprintf(stderr, "arbitration: media of this room (%s): ambient counted at %d %%, score %d -> %d%s\n", why, pct, score, score + bonus, fl);
+             fprintf(stderr, "arbitration: media of this room (%s): ambient counted at %d %%, score %d -> %d%s%s\n", why, pct, score, score + bonus, fl, qs);
              score += bonus; } }
     /* The other Echos' claims are Wi-Fi broadcasts, and the BLE scan's share of the antenna loses them (ble.c): no
      * scanning while this round listens: the wait it took (none when nobody was worth waiting for, arb.c "Rivals"),
@@ -2048,12 +2071,12 @@ static void wake_heard(uint64_t begin, uint64_t end, int simulated)     /* captu
     if (arb_mode(-1) == ARB_KIOSK) {
         int score = kiosk_score(end, simulated);
         if (score == INT_MIN) { fprintf(stderr, "arbitration: less than 3 s heard, answers without a claim\n"); trigger(0, end); return; }
-        claim(kw, score, prio, end);
+        claim(kw, score, prio, end, 0, -1);
         return;
     }
     int own = wake_score(begin, end, simulated);
     /* the front end's score only for a round: arbitration off, or nobody to ask, and the claim is only a log line */
-    if (!arb_rounds() || !afe_start(simulated)) { claim(kw, own, prio, end); return; }
+    if (!arb_rounds() || !afe_start(simulated)) { claim(kw, own, prio, end, 0, -1); return; }
     pend.end = end; pend.own = own; pend.prio = prio; snprintf(pend.kw, sizeof pend.kw, "%s", kw);
     score_due = mono_ms() + AFE_WAIT_MS;
 }
@@ -2065,7 +2088,8 @@ static void score_wait(void)                        /* capture thread, while sco
     score_due = 0;
     if (afe != INT_MIN) { fprintf(stderr, "wake: score %d from the front end (%d from the mic stream)\n", afe, pend.own); score = afe; }
     else if (busy) { fprintf(stderr, "wake: no score from the front end within %d ms, the mic stream's goes\n", AFE_WAIT_MS); afe_late = 1; }
-    claim(pend.kw, score, pend.prio, pend.end);
+    if (afe != INT_MIN) claim(pend.kw, score, pend.prio, pend.end, afe_voice, afe_ambient);
+    else claim(pend.kw, score, pend.prio, pend.end, 0, -1);
 }
 
 /* The keyword the loaded model answers to (capture thread).  Amazon's en-US sets for "Computer", "Amazon" and "Ziggy"

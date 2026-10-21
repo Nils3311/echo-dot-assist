@@ -1401,6 +1401,15 @@ Run in this order. Each step says what it proves.
       `fake_ha_arbitration_takeover.py` (arb-takeover): both hear / only the other hears / younger than 2 s / own wake
       word again / thinking / follow-up keeps it / ringing keeps it / off; with `stop_ends_listening` off "<wake word>,
       stop" goes to HA, with it on listening + wake word + stop leaves no run.
+- [~] Arbitration: noise cap (2026-10-21; rebased onto upstream 2026-10-31 into `claim`, with the front end read on
+      `afe_thread`). A cooker hood beside the kitchen Echo raised its ambientEnergy to 6x its quiet level, and the living
+      room took a wake word said in the kitchen (2026-10-21 15:44:26: kitchen ambient 103 k, living room 44.5 k, the
+      living room won by 2.3 dB). ambientEnergy says how loud the Echo's room is, not where the talker stands (48 rounds
+      of a measuring run: it pointed at the right Echo in 34, voiceEnergy alone in 45). min(ambient, 3 x quiet) left
+      that run's 48 rounds as they were and turned 15:44:26 (+0.6 dB); 2x already lost one. Quiet levels: kitchen
+      17 336, living room 16 102 (medians of 11 days without media); music 0.5-1.6x, the hood up to 4.7x (2.7x through
+      the wall). Setting `arbitration_noise_cap` (3, 0 off), learned per Echo (`noisecap.c`, `arb_noise`). Open: a
+      longer run with the cap on; the front end's JSON and Pryon's classifier score are logged for better measures.
 - [x] Stale `-m` after the wake word migration (2026-10-06, donut kept going back to Alexa): `artifact-install.sh
       migrate` renamed `models/echo-de` to `echo-de-DE` and moved `state/wake_word`, but hassmic.conf kept
       `ARGS="-m .../models/echo-de/pryon.manifest"`; `wake_words_scan` added the -m path unchecked, so HA's select had two

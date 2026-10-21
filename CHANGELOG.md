@@ -26,6 +26,12 @@ What changed for people using the Echo, newest first. Details and measurements a
   downstairs). An Echo in a conversation (a follow-up question), busy with a reply or ringing keeps the next wake word as
   before. Setting "A new wake word ends a false wake" under "Wake word arbitration", on by default; update every Echo at
   once and set the same on each.
+- **A loud cooker hood no longer sends your wake word to the next room.** Noise right next to an Echo counted against
+  it, so the Echo of another room answered although you stood at the stove. Each Echo now learns how loud its room is
+  when quiet and counts its own noise at most three times that ("Cap on the room's own noise" under wake word
+  arbitration; 0 = off). It needs 10 wake words to learn first. Quiet rooms and music are not affected.
+- The log now notes per wake word what Amazon's front end measured (all of it, as one line) and how sure the wake word
+  engine was, for working out better measures later; nothing changes by it.
 
 ## 2026-10-30
 

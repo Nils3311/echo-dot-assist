@@ -368,6 +368,8 @@ const HELP = {
       const m = state.media;
       return m && !(m.players || []).length ? h('p', { class: 'f-model' }, 'No players listed: applies to this Echo\'s own playback only.') : null;
     } },
+  arbitration_noise_cap: { parent: 'arbitration', sub: true, when: () => settingValue('arbitration_mode') !== 'kiosk',
+    help: 'Loud noise next to this Echo, such as a cooker hood, counts against it as if it were the room\'s background, and a wake word you said right in front of it can go to the next room. The Echo learns how loud its room is when quiet (from wake words heard without media playing, the last 64) and counts its background at most this many times that level. Takes effect once it has learned from 10 wake words. 0: off. Default 3; best the same on every Echo.' },
   arbitration_takeover: { parent: 'arbitration', help: 'An Echo that woke up by mistake (the TV, children in another room) listens for up to 15 seconds and kept every wake word said meanwhile. With this, after 2 s of listening (or thinking) it gives way: when it hears a new wake word that another Echo heard better, it stops quietly and that Echo answers; when it heard you best itself, it starts listening afresh. A wake word it did not hear leaves it alone. Echos in a conversation (a follow-up question), busy with a reply or ringing keep the next wake word. "<wake word>, stop" is the separate setting "Stop after the wake word ends listening". Off: as before. On by default; set the same on every Echo.' },
   sound_detection: { icon: 'wave', ha: ['Sound (event)'], help: 'Home Assistant gets a "Sound" event for smoke and CO alarms, breaking glass, barking and more. Amazon\'s Alexa Guard model listens for those, and for a crying baby, snoring, coughing, running water and beeping appliances. A stock Echo double-checks every hit in Amazon\'s cloud; this one cannot.',
     note: 'Less reliable than on a stock Echo: treat events as hints, never as a replacement for a smoke detector.',
@@ -432,6 +434,7 @@ const SUB = {
   arbitration_window_auto: 'Waits just long enough for the other Echos',
   arbitration_window: 'How long the Echo waits for other devices',
   arbitration_takeover: 'A false wake gives way to a new wake word',
+  arbitration_noise_cap: 'Noise right beside this Echo counts only so much',
   sound_detection: 'Events for smoke alarms, breaking glass, barking and more',
   wake_events: 'An event each time this Echo hears its wake word',
   request_text: 'What was heard and answered, as two text sensors',
@@ -463,6 +466,7 @@ const settingValueIndex = (name) => { const s = state.settings.find((x) => x.nam
 const settingValue = (name) => { const s = state.settings.find((x) => x.name === name); return s ? (s.type === 'choice' ? s.choices[s.value] : s.value) : undefined; };
 const label = (s) => { const t = s.label.replace(/ \(experimental\)$/, '').replace(/^Equalizer /, '').replace(' with other Echos', ''); return t[0].toUpperCase() + t.slice(1); };
 const fmt = (s, v) => {
+  if (s.name === 'arbitration_noise_cap') return v ? `${v}× the quiet room` : 'off';
   if (s.name === 'timer_ring') return !v ? 'until stopped' : v < 60 ? `${v} s` : `${Math.floor(v / 60)} min${v % 60 ? ` ${v % 60} s` : ''}`;
   if (s.unit === 'dB') return `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v)} dB`;
   if (s.unit === 'dBFS') return `${v < 0 ? '−' : ''}${Math.abs(v)} dBFS`;

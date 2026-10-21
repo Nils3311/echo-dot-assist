@@ -66,6 +66,10 @@ void arb_self(unsigned char id[8]);                            /* the pairing ge
  * or busy with a run (main.c wake_heard says which runs) and owns the next wake word.  Only Echos that heard the same keyword compete ("Echo" in German and in
  * English is the same one).  Returns the monotonic ms at which to call arb_decide(), or 0: nobody else to ask, answer now.
  * ARB_KIOSK: score is Kiosk Satellite's (main.c kiosk_score), prio is ignored, and there is always a round. */
+/* The noise cap (noisecap.h, main.c claim): a round's ambientEnergy from the front end, the ambient to count (counted)
+ * and the quiet level it was capped against (quiet, 0: not learned yet); learned when no media plays here (media 0),
+ * kept in state/arbitration.  factor: the arbitration_noise_cap setting, 0 = off.  Any lock but arb's. */
+void arb_noise(int factor, double ambient, int media, double *counted, double *quiet);
 long long arb_claim(const char *keyword, int score, int prio);
 int       arb_decide(void);                     /* 1: this Echo answers */
 /* Before then: 1 once deciding now gives what waiting would (every member that takes part claimed, or one beat us);
