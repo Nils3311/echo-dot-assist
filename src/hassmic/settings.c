@@ -60,7 +60,7 @@ static void path(char *out, size_t cap, const char *file) { snprintf(out, cap, "
 
 /* ---------------------------------------------------------------- the table */
 
-enum id { WAKE_ENGINE, SPEECH_LANG, WAKE_ADAPT, MIC_LEVEL, DENOISE, WAKE_SOUND, WAKE_SOUND_REMOVAL, MUTE, DND, TIMER_RING, TIMER_SOUND, TIMER_STOP_ANY, STOP_ENDS, WAKE_IN_REQ, END_REQ, BT_ANNOUNCE, BT_LANG, LED_AUTO, LED_LEVEL, RING_ROT, BAND, ARB, ARB_MODE, ARB_AUTO, ARB_WINDOW, ARB_OFFSET, ARB_MEDIA_PLAYERS, ARB_MEDIA_AMBIENT, SOUND, WHISPER, WAKE_EVENTS, REQUEST_TEXT, WIFI_MOTION,
+enum id { WAKE_ENGINE, SPEECH_LANG, WAKE_ADAPT, MIC_LEVEL, DENOISE, WAKE_SOUND, WAKE_SOUND_REMOVAL, MUTE, DND, TIMER_RING, TIMER_SOUND, TIMER_STOP_ANY, STOP_ENDS, WAKE_IN_REQ, END_REQ, BT_ANNOUNCE, BT_LANG, LED_AUTO, LED_LEVEL, RING_ROT, BAND, ARB, ARB_MODE, ARB_AUTO, ARB_WINDOW, ARB_OFFSET, ARB_MEDIA_PLAYERS, ARB_MEDIA_AMBIENT, TAKEOVER, SOUND, WHISPER, WAKE_EVENTS, REQUEST_TEXT, WIFI_MOTION,
           WIFI_SENS, LIGHT_SENSOR, BT_AUDIO, BT_SPEAKER, BT_OUT_DELAY, BT_OUT_AWAKE, BT_OUT_STAY, DROPIN, DROPIN_ANSWER, UPDATES, HTTPS_VERIFY, SS_UNPAIRED, EQ_BASS, EQ_MID, EQ_TREBLE, SPK_GAIN, VOLUME, VOL_SPLIT,
           ASSIST_LINK, ASSIST_LEVEL, ASSIST_OFFSET, SOUNDS_LINK, SOUNDS_LEVEL, SOUNDS_OFFSET, TIMER_LINK, TIMER_LEVEL, TIMER_OFFSET,
           CALL_LINK, CALL_LEVEL, CALL_OFFSET, NSET };
@@ -112,6 +112,8 @@ static const struct setting table[NSET] = {
      * so not exported; how much the background counts is a matter of taste, best the same on every Echo */
     [ARB_MEDIA_PLAYERS] = { "arbitration_media_players", "Media players in this room", "Features", NULL, S_TEXT, 0, 0, 0, 0 },
     [ARB_MEDIA_AMBIENT] = { "arbitration_media_ambient", "Background noise while media plays", "Features", "%", S_INT, 10, 100, 1, 0 },
+    /* main.c keeps it (trigger: takeable): best the same on every Echo of a network */
+    [TAKEOVER]    = { "arbitration_takeover", "A new wake word ends a false wake", "Features", NULL, S_BOOL, 0, 1, 1, 0 },
     [SOUND]       = { "sound_detection", "Sound detection", "Features", NULL, S_BOOL, 0, 1, 1, 1 },
     [WHISPER]     = { "whisper_detection", "Whisper detection", "Features", NULL, S_BOOL, 0, 1, 1, 1 },
     /* proto_esphome.c's "Wake word" event entity (core_wake_events, issue #48) */
@@ -236,6 +238,7 @@ int settings_get(const struct setting *s)
     case TIMER_SOUND: return core_timer_sound(-1);
     case TIMER_STOP_ANY: return core_timer_stop_any(-1);
     case STOP_ENDS: return core_stop_ends_listening(-1);
+    case TAKEOVER: return core_takeover(-1);
     case WAKE_IN_REQ: return core_wake_in_request(-1);
     case END_REQ: return core_end_of_request(-1);
     case BT_ANNOUNCE: return core_bt_announce(-1);
@@ -295,6 +298,7 @@ static void put(enum id i, int v)
     case TIMER_SOUND: core_timer_sound(v); break;              /* refused without its file: settings_set says so */
     case TIMER_STOP_ANY: core_timer_stop_any(v); break;
     case STOP_ENDS: core_stop_ends_listening(v); break;
+    case TAKEOVER: core_takeover(v); break;
     case WAKE_IN_REQ: core_wake_in_request(v); break;
     case END_REQ: core_end_of_request(v); break;
     case BT_ANNOUNCE: core_bt_announce(v); break;

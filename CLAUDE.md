@@ -59,7 +59,7 @@ aioesphomeapi, wyoming, aiosendspin, noiseprotocol, aiohttp):
                                              # one too slow (HASSMIC_FAKE_ALIGN_SLOW) or busy goes by the level, the
                                              # speaker adaptation in use and saved (a German "Alexa", timed per loop)
 .venv/bin/python tests/fake_ha_arbitration.py # two Echos under one fake HA: wake word arbitration, join paths and security
-                                             # (_join, _rounds, _kiosk, _window, _afe, _media.py beside it; tests/arbecho.py)
+                                             # (_join, _rounds, _kiosk, _window, _afe, _media, _takeover.py beside it; tests/arbecho.py)
 .venv/bin/python tests/fake_ha_dropin.py      # Drop In between two Echos: call, answer, hang-up paths, refusals, lost peer,
                                              # the ringtone at the sounds volume (HASSMIC_EARCONS: stand-in stock sounds)
 .venv/bin/python tests/blueprint_dropin.py    # the Drop In voice blueprint against stand-ins of HA's registries, states,
@@ -302,10 +302,10 @@ No model `#ifdef`s in shared code: new differences become a board field, a `devi
   `main.c` `kiosk_score` + `arbitration_offset` dB, `arbitration_window` ±ms, no key, no priority, always waits); the beacon flags it (1 quiet +
   2 kiosk). The socket belongs to arb's loop thread. `HASSMIC_ARB_SCALE` (tests, `PACE()`): the network's own timers
   (beacons, discovery, tags, handoff, pairing) at that fraction; rounds and the window keep theirs. Page: two cards with pros and cons (`HELP.arbitration_mode.modes`).
-  Media in the room (`main.c` above `wake_heard`): while this Echo plays music (`music_on`), a media player of
+  Media in the room (`main.c` `claim`): while this Echo plays music (`music_on`), a media player of
   `arbitration_media_players` (page-only text setting, `S_TEXT`, not exported, max 8 ids) plays or buffers, or for 120 s
   after (`HASSMIC_MEDIA_HOLD_MS`), the score gets `1000 * log10(100 / arbitration_media_ambient)` (50 % = +301), both
-  modes, before `arb_claim`. The players' states: `HA_STATE_SUB` without once on each keyed link (`proto_esphome.c`
+  modes, in `claim` before `arb_claim` (so for the front end's, the mic stream's and Kiosk's score alike). The players' states: `HA_STATE_SUB` without once on each keyed link (`proto_esphome.c`
   `media_follow` on SUBSCRIBE_HA_STATES, `media_subscribe` for ids added later), `core_media_state`; the last keyed link
   gone, playing ones go into the hold. Once per id and link (`media_sub` keeps the ids with HA's last state, replayed on
   A, B, A). Page status `"media"` (`core_media_json`: `linked`, a player `missing` when no state came within 10 s,
@@ -313,6 +313,11 @@ No model `#ifdef`s in shared code: new differences become a board field, a `devi
   `volume_level` attribute (`core_media_volume`); `media_mark` logs the room level (`room_put`/`room_str`: capture
   thread, atomics) at each change and 5 s after (`media_log_tick` in `volume_led_thread`, leaf `mlog_lock` under
   `core_lock`; `HASSMIC_MEDIA_AFTER_MS`, `HASSMIC_MEDIA_EVERY_MS`).
+  Takeover (`main.c` above `trigger`, setting `arbitration_takeover`, under arbitration's card, exported, on): a run this
+  Echo's own wake word opened (`run_wake_ms`, `run_kw`; not a follow-up/button/-w remote) that LISTENS or THINKS and is
+  older than `TAKEOVER_MS` (2 s: HA's `WAKE_WORD_COOLDOWN`) claims prio 0 (`takeable`), ends quietly (`quiet_cancel`)
+  when it loses a round for a wake word it heard (`lost`; never on another Echo's "answers" alone), and listens anew
+  when it wins (`trigger`).  "<wake word>, stop" is `stop_ends_listening`'s alone.
 - **Music**: `sendspin.c` (Music Assistant Sendspin player over `ws.c`/`noise.c`/`net.c`/`hash.c`, decodes via
   `dr_flac`/`minimp3`/libopus). `a2dp.c` + `a2dp_codecs.c` + `sbc.c` = Bluetooth A2DP sink (SBC, AAC via firmware FFmpeg
   loaded with dlopen, aptX/aptX HD via `freeaptx`) with AVRCP. Only one music source plays at a time (newest wins). "<wake word>, stop" pauses it when nothing else was

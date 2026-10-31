@@ -8,7 +8,8 @@
  * (signal to noise of the wake word: the front end's own energies where it gives them, else taken from the processed mic
  * stream) and it is broadcast as a claim; after the window (below) the
  * Echo answers only if no claim of the last LOOKBACK_MS beats it.  An Echo in a conversation or ringing claims with
- * priority: the next wake word is for it.  The winner broadcasts that it answers, so an Echo whose detection comes late
+ * priority: the next wake word is for it (with arbitration_takeover not one that only listens after a wake word of its
+ * own: main.c takeable).  The winner broadcasts that it answers, so an Echo whose detection comes late
  * does not answer as well.  With no other member heard from lately there is no round and no delay.  While media plays
  * in an Echo's room, main.c raises its score before the claim (claim(): the room's background counted less), so
  * the claim's format is the same and older Echos just compare the number.
@@ -848,7 +849,7 @@ static void on_packet(const uint8_t *p, size_t n, long long now, uint32_t ip)
             snprintf(late, sizeof late, ", %+lld ms%s", d, round_.decided ? ", after the decision" : "");
         }
         fprintf(stderr, "arbitration: %02x%02x%02x%02x %s, score %d%s%s\n", id[0], id[1], id[2], id[3], k->won ? "answers" : "heard it",
-                k->score, k->prio ? " (in a conversation)" : "", late);
+                k->score, k->prio ? " (with priority: busy or ringing)" : "", late);
     } break;
     }
 }
@@ -1273,7 +1274,7 @@ long long arb_claim(const char *keyword, int score, int prio)
         else snprintf(why, sizeof why, ", waits up to %d ms for %d of %d (%s)", w, nw, nm, !wauto ? "set" : ns < AUTO_LEARN ? "learning" : "learned");
     } else snprintf(why, sizeof why, "%s", !arbitrate ? ", arbitration off" : ", no other Echo to ask");
     pthread_mutex_unlock(&lk);
-    fprintf(stderr, "arbitration: heard it, score %d%s%s\n", score, prio && !round_.kiosk ? " (in a conversation)" : "", why);
+    fprintf(stderr, "arbitration: heard it, score %d%s%s\n", score, prio && !round_.kiosk ? " (with priority: busy or ringing)" : "", why);
     return due;
 }
 

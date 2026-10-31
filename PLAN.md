@@ -1385,6 +1385,22 @@ Run in this order. Each step says what it proves.
       <dBFS>` on every round's `arbitration:` line. Room = the processed mic stream in 100 ms frames (`room_put` in the
       capture thread, two atomics): mean square of the last 1 s, floor = 20th percentile of the last 5 s. HA's state
       comes after the music is audible, so the 1 s before a start can hold music already; the floor is the baseline.
+- [x] Takeover (2026-10-19, measured on two Echos; rebased onto upstream 2026-10-31 without its "stop" half, which #56's
+      `stop_ends_listening` covers). The case: the living room woke up wrongly (children, TV) and listened up to 15 s
+      (HA's VAD limit, `assist_pipeline/vad.py`); it claimed every wake word meanwhile with prio 2 (`state != IDLE`),
+      which beats any score: the kitchen's "Alexa" was lost (2026-10-18 18:16:30). Now (setting `arbitration_takeover`,
+      on, under arbitration, exported): a run of this Echo's own wake word (`run_wake_ms`; not a follow-up, not the
+      button, not `-w remote`) that listens or thinks and is older than `TAKEOVER_MS` 2 s claims prio 0 (`takeable`);
+      losing a round for a wake word it heard itself (`lost`, same wake word, hassmic mode) ends it quietly
+      (`quiet_cancel`); winning cancels it and listens anew. Another Echo's "answers" for a wake word this one did not
+      hear does nothing (an "Alexa" upstairs must not end a real command downstairs). THINKING counts: a wake that heard
+      nothing thinks after a second or two, just when its talker calls again (2026-10-19 21:06:09). SPEAKING keeps prio
+      2. 2 s: HA takes one start per wake word in 2 s (`WAKE_WORD_COOLDOWN`); 2.5 s measured at the claim left a talker
+      who called again at once with the wrong Echo twice in a row (21:06:12). Wire unchanged. With the rivals estimator
+      (forum #166) a takeable Echo's claim is an ordinary score, its rounds kept like any other.
+      `fake_ha_arbitration_takeover.py` (arb-takeover): both hear / only the other hears / younger than 2 s / own wake
+      word again / thinking / follow-up keeps it / ringing keeps it / off; with `stop_ends_listening` off "<wake word>,
+      stop" goes to HA, with it on listening + wake word + stop leaves no run.
 - [x] Stale `-m` after the wake word migration (2026-10-06, donut kept going back to Alexa): `artifact-install.sh
       migrate` renamed `models/echo-de` to `echo-de-DE` and moved `state/wake_word`, but hassmic.conf kept
       `ARGS="-m .../models/echo-de/pryon.manifest"`; `wake_words_scan` added the -m path unchecked, so HA's select had two

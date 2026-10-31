@@ -623,6 +623,11 @@ static int run_wake;             /* under lock: the wake word started this run (
  * ring, a call, a reply, a THINKING run).  stop_ends: setting stop_ends_listening (stop_word) */
 static long long heard_ms, stop_ms;
 static int stop_cut, stop_ends;
+/* Lock held.  run_wake_ms: when this Echo's own wake word opened the run that goes on now (0: a follow-up of a
+ * conversation, the button, -w remote), run_kw that wake word.  takeover: setting arbitration_takeover (takeable) */
+static long long run_wake_ms;
+static char run_kw[64];
+static int takeover = 1;
 
 static atomic_int afe_asked;                        /* the front end was asked for the wake word's energies (afe_score) */
 
@@ -683,6 +688,8 @@ static void pipeline_start(uint64_t from)    /* from: where the wake word that s
      * end ended this one before any audio went out (heard_end in the capture thread) */
     micend_start(&mic_end, MICEND_OFF, 0, 0, NULL);
     run_wake = from != 0;
+    run_wake_ms = from ? mono_ms() : 0;
+    if (from) wake_phrase_bare(run_kw, sizeof run_kw);
     proto->start();
     atomic_store(&streaming, 1);
     if (core_local_wake) lead_in();                 /* ahead of the capture thread's first block: it needs the lock */
@@ -724,6 +731,8 @@ int core_wake_sound(int set) { if (set >= 0) use_earcon = set; return use_earcon
 int core_wake_in_request(int set) { if (set >= 0) wake_in_request = set != 0; return wake_in_request; }
 int core_end_of_request(int set) { if (set >= 0 && set < MICEND_MODES) end_mode = set; return end_mode; }
 int core_stop_ends_listening(int set) { if (set >= 0) stop_ends = set != 0; return stop_ends; }
+
+int core_takeover(int set) { if (set >= 0) takeover = set != 0; return takeover; }
 
 int core_bt_announce(int set) { if (set >= 0) use_bt_announce = set; return use_bt_announce; }
 
@@ -997,6 +1006,7 @@ void core_pipeline_finish(void)
     if (atomic_exchange(&streaming, 0) && connected && proto->stop) proto->stop();
     mic_stopped();
     core_set_state(IDLE);
+    run_wake_ms = 0;
     if (mono_ms() - last_wake_ms > 3000) wake_reset();      /* a reset puts the engine back to sleep: "<wake word>, stop" would lose its "stop" */
     if (!connected) barge_in = 0;
     if ((barge_in || !core_local_wake) && satellite_running && connected) {
@@ -1055,6 +1065,26 @@ static int stop_heard(void) { return heard_ms && stop_ms >= heard_ms && stop_ms 
  * did not hear the wake word).  With stop_ends_listening any "stop" does */
 static int stopped_now(void) { return stop_heard() && (stop_cut || stop_ends); }
 
+/* Takeover (setting arbitration_takeover, on by default).  A wrong Echo that woke up (the TV, children in another room)
+ * listened for up to 15 s (Home Assistant's VAD limit), and claimed every wake word in that time with priority: "Alexa"
+ * said anywhere else was lost to it (2026-10-18 18:16:30, the living room took the kitchen's command).  So a run this
+ * Echo's own wake word opened has no priority while it only listens: a new wake word goes to whichever Echo heard it
+ * best, and this one ends its run quietly when it heard that wake word too and lost the round (lost); when it wins, it
+ * listens anew from that wake word (trigger).  Not when it did not hear it: another Echo's "answers" alone would let an
+ * "Alexa" upstairs end a real command downstairs.  THINKING counts as listening here: a wake that heard nothing goes to
+ * THINKING after a second or two, just when its talker calls from the next room (2026-10-19 21:06:09).  Follow-ups of a
+ * conversation, the button's runs and SPEAKING keep it (another Echo answering then would talk over the reply), and so
+ * does a run younger than TAKEOVER_MS: Home Assistant takes one start per wake word in 2 s (WAKE_WORD_COOLDOWN, counted
+ * from the last start).  Measured at the claim, which is a round's window before the winner starts: 2.5 s left a
+ * talker who called again at once with the wrong Echo twice in a row (21:06:12), each win starting its run anew.
+ * "<wake word>, stop" is stop_ends_listening's (stop_word), not this.  Lock held */
+#define TAKEOVER_MS 2000
+static int takeable(void)
+{
+    return takeover && core_local_wake && (state == LISTENING || state == THINKING) && run_wake_ms && !atomic_load(&alarm_on)
+           && mono_ms() - run_wake_ms >= TAKEOVER_MS;
+}
+
 /* touch: the action button rather than the wake word.  from: where the wake word ended on the ring's clock (0: unknown) */
 static void trigger(int touch, uint64_t from)
 {
@@ -1065,11 +1095,11 @@ static void trigger(int touch, uint64_t from)
     if (touch && atomic_load(&alarm_on)) {
         core_alarm_stop("button");
         wake_cut_ms = mono_ms();
-    } else if ((state == THINKING || (touch && state == LISTENING)) && connected && proto->cancel) {
+    } else if ((state == THINKING || (touch && state == LISTENING) || (!touch && takeable())) && connected && proto->cancel) {
         /* As the center button of a Voice PE: a misheard command is stopped before its tool calls run, not only its
          * reply.  Same message as ESPHome's voice_assistant.stop; Home Assistant cancels the run's task (the LLM, and
          * the tool calls it has not made yet).  The wake word does the same and then listens again, as during a reply,
-         * unless its "stop" came already (during the round) */
+         * unless its "stop" came already (during the round); so does a takeover's (above) on a run that only listens */
         fprintf(stderr, "%s: pipeline cancelled\n", touch ? "button" : "wake word");
         quiet_cancel();
         if (!touch && stopped_now()) fprintf(stderr, "stop: came during the round, nothing started\n");
@@ -1950,6 +1980,20 @@ size_t core_media_json(char *o, size_t cap)
     return n < cap ? n : cap - 1;
 }
 
+/* Takeover (takeable): another Echo took a wake word this Echo heard too (capture thread, the round lost).  A run of this
+ * Echo's own that only listens, for that wake word, ends quietly.  Not in Kiosk Satellite mode: no priority there */
+static void lost(void)
+{
+    char k[64];
+    pthread_mutex_lock(&core_lock);
+    wake_phrase_bare(k, sizeof k);
+    if (takeable() && arb_mode(-1) == ARB_HASSMIC && !strcasecmp(k, run_kw) && connected && proto->cancel) {
+        fprintf(stderr, "takeover: another Echo heard the wake word better, pipeline cancelled\n");
+        quiet_cancel();
+    }
+    pthread_mutex_unlock(&core_lock);
+}
+
 static void answer(uint64_t from)                   /* capture thread: act on the wake word that ended at from */
 {
     trigger(0, from);
@@ -1968,7 +2012,8 @@ static void answer(uint64_t from)                   /* capture thread: act on th
  * music in the kitchen and the talker in the living room, is not measured yet: hence 3 dB by default, 10 dB at most
  * (10 %).  On the wire it is only a higher score: claims keep their format, older Echos compare the number, and a
  * member could always claim any score.  An Echo in a conversation or ringing still claims priority 2, which no score
- * beats; so does one Home Assistant plays media on (play_media: state not IDLE), as before. */
+ * beats; so does one Home Assistant plays media on (play_media: state not IDLE), as before, but not one that only
+ * listens after a wake word of its own (takeable, arbitration_takeover): there the score decides, media included. */
 static void claim(const char *kw, int score, int prio, uint64_t end)   /* capture thread */
 {
     { char why[160], fl[48]; pthread_mutex_lock(&core_lock); int pct = media_ambient, here = media_here(why, sizeof why); pthread_mutex_unlock(&core_lock);
@@ -1994,7 +2039,7 @@ static void wake_heard(uint64_t begin, uint64_t end, int simulated)     /* captu
     if (!arb_running()) { trigger(0, end); return; }
     if (arb_due || score_due) return;               /* the same wake word once more while its round runs */
     pthread_mutex_lock(&core_lock);
-    int alarm = atomic_load(&alarm_on), can = alarm || (connected && satellite_running && !core_muted()), prio = alarm || state != IDLE ? 2 : 0;
+    int alarm = atomic_load(&alarm_on), can = alarm || (connected && satellite_running && !core_muted()), prio = alarm || (state != IDLE && !takeable()) ? 2 : 0;
     pthread_mutex_unlock(&core_lock);
     if (!can) { trigger(0, end); return; }               /* could not answer: a claim would only silence the Echos that can */
     /* the one heard: with two wake words, Echos compete per wake word as they do with one each */
@@ -3273,7 +3318,7 @@ static void *capture_thread(void *arg)
         }
         if (score_due) score_wait();
         afe_late_check();
-        if (arb_due && (mono_ms() >= arb_due || arb_settled())) { arb_due = 0; if (arb_decide()) answer(arb_from); else { afe_done(); wake_tell("answered_elsewhere"); } }    /* after this block went out live */
+        if (arb_due && (mono_ms() >= arb_due || arb_settled())) { arb_due = 0; if (arb_decide()) answer(arb_from); else { lost(); afe_done(); wake_tell("answered_elsewhere"); } }    /* after this block went out live */
 
         pthread_mutex_lock(&core_lock);
         if (core_local_wake && (state == LISTENING || state == THINKING) && time(NULL) - state_since > PIPELINE_TIMEOUT) {

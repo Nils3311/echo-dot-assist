@@ -18,6 +18,14 @@ What changed for people using the Echo, newest first. Details and measurements a
   also applies to the Echo's own music. The page says when Home Assistant does not report a listed player (a typo in
   the entity id) or is not connected. A refused list stays in the field, marked, with the reason under it. A settings
   line too long to take is refused whole when imported, instead of being cut short.
+- **A new wake word takes over from an Echo that woke up by mistake.** An Echo that woke up wrongly (the TV, children
+  in another room) listened for up to 15 s and kept every wake word said meanwhile: "Alexa" in the kitchen was lost to
+  the living room. Now, once it has listened (or thought) for 2 s, it gives way: when it hears a new wake word that
+  another Echo heard better, it stops quietly and that Echo answers; when it heard you best itself, it listens afresh
+  from your wake word. A wake word it did not hear leaves it alone (an "Alexa" upstairs does not end a command
+  downstairs). An Echo in a conversation (a follow-up question), busy with a reply or ringing keeps the next wake word as
+  before. Setting "A new wake word ends a false wake" under "Wake word arbitration", on by default; update every Echo at
+  once and set the same on each.
 
 ## 2026-10-30
 

@@ -199,6 +199,9 @@ int    core_media_volume(const char *entity, const char *value);   /* its volume
 void   core_media_followed(void);                           /* a keyed link follows the listed players from now on */
 void   core_media_link_lost(void);                          /* no keyed link left: players that played count as stopped */
 size_t core_media_json(char *o, size_t cap);                /* for the settings page */
+/* main.c trigger (arbitration_takeover): a run that only listens after this Echo's own wake word gives way to a new
+ * wake word another Echo heard better.  0/1; -1 reads.  Lock held */
+int    core_takeover(int set);
 enum { MUSIC_SENDSPIN = 1, MUSIC_BLUETOOTH = 2 };
 void   core_music(int source, int on);                      /* a music stream runs: the wake word threshold follows */
 void   core_bt_device(const char *name, int on);            /* a Bluetooth speaker source connected / went (not the lock) */

@@ -315,7 +315,7 @@ const HELP = {
         hassmic: ['+', 'Only your Echos: claims are signed with the network\'s key, so nothing else on the network can silence an Echo'],
         kiosk: ['-', 'None: any device on your network can claim every wake word and keep this Echo silent'] }],
       ['Who answers', {
-        hassmic: ['+', 'The one that heard you best, scored with the wake word energies of Amazon\'s own audio front end, as stock Echos did. The Echo you are talking to, or one that is ringing, keeps the next wake word'],
+        hassmic: ['+', 'The one that heard you best, scored with the wake word energies of Amazon\'s own audio front end, as stock Echos did. The Echo you are in a conversation with, or one that is ringing, keeps the next wake word; one that only listens after a wake word of its own gives way to a new one'],
         kiosk: ['-', 'The one that heard the wake word loudest over its room. No preference for the device you are talking to: a louder one can take the next wake word in the middle of a conversation. The Echo\'s loudness is not yet calibrated against a tablet\'s microphone: an offset (below) evens it out by ear'] }],
       ['Speed', {
         hassmic: ['+', 'Decided the moment every other Echo\'s claim is in; the full wait, learned from your network, only when one did not hear you. With no other Echo around there is no wait at all'],
@@ -368,6 +368,7 @@ const HELP = {
       const m = state.media;
       return m && !(m.players || []).length ? h('p', { class: 'f-model' }, 'No players listed: applies to this Echo\'s own playback only.') : null;
     } },
+  arbitration_takeover: { parent: 'arbitration', help: 'An Echo that woke up by mistake (the TV, children in another room) listens for up to 15 seconds and kept every wake word said meanwhile. With this, after 2 s of listening (or thinking) it gives way: when it hears a new wake word that another Echo heard better, it stops quietly and that Echo answers; when it heard you best itself, it starts listening afresh. A wake word it did not hear leaves it alone. Echos in a conversation (a follow-up question), busy with a reply or ringing keep the next wake word. "<wake word>, stop" is the separate setting "Stop after the wake word ends listening". Off: as before. On by default; set the same on every Echo.' },
   sound_detection: { icon: 'wave', ha: ['Sound (event)'], help: 'Home Assistant gets a "Sound" event for smoke and CO alarms, breaking glass, barking and more. Amazon\'s Alexa Guard model listens for those, and for a crying baby, snoring, coughing, running water and beeping appliances. A stock Echo double-checks every hit in Amazon\'s cloud; this one cannot.',
     note: 'Less reliable than on a stock Echo: treat events as hints, never as a replacement for a smoke detector.',
     status: () => {
@@ -430,6 +431,7 @@ const SUB = {
   arbitration_offset: 'Evens out the Echo against your tablets',
   arbitration_window_auto: 'Waits just long enough for the other Echos',
   arbitration_window: 'How long the Echo waits for other devices',
+  arbitration_takeover: 'A false wake gives way to a new wake word',
   sound_detection: 'Events for smoke alarms, breaking glass, barking and more',
   wake_events: 'An event each time this Echo hears its wake word',
   request_text: 'What was heard and answered, as two text sensors',

@@ -202,7 +202,7 @@ satellite for a few seconds. `-w remote` in [`ARGS`](#hassmicconf) does the same
 ## Several Echos
 
 The Echos compare by how clearly the word stood out of the room's noise. An Echo in a conversation, or ringing, keeps
-the next wake word. With only one Echo there is no delay. The wait delays only the sound and the ring, not what you
+the next wake word (but one that only listens after a false wake gives way, below). With only one Echo there is no delay. The wait delays only the sound and the ring, not what you
 say: the Echo that answers sends Home Assistant everything from the end of the wake word, so speak on without a pause.
 How clearly the word stood out comes from Amazon's audio front end, which takes 0.15 s to answer on the Dots and up to
 0.4 s on an Echo Show; the Echo keeps listening meanwhile, and after 0.5 s without an answer it uses its own measure.
@@ -264,6 +264,18 @@ higher score. The players are not copied to other Echos (each has its own room),
 under the list whether media counts right now and why; the log has a line per wake word
 (`arbitration: media of this room (media_player.kitchen_sonos playing): ambient counted at 50 %, score 1651 -> 1952`,
 or `no media of this room`).
+
+**An Echo that woke up by mistake.** One that the TV or children in another room woke up listens for up to 15 s.
+Once it has listened (or thought) for 2 s it no longer keeps the next wake word: when it hears your "Alexa" too and
+another Echo heard it better, it stops quietly (Home Assistant drops its run, nothing of it is carried out) and that
+Echo answers, within about the round's wait; when it heard you best itself, it starts listening afresh from your wake
+word. A wake word it did not hear leaves it alone, so an "Alexa" upstairs never ends a command downstairs; it then
+listens on to its end. A follow-up question of a conversation, a reply being spoken, a ringing timer and a run started
+with the action button keep the next wake word as before; so does a run younger than 2 s, since Home Assistant takes
+only one start per wake word in 2 s. "A new wake word ends a false wake" under "Wake word arbitration" on the settings
+page (on by default) switches it off; set the same on every Echo, and update them all at once: an older Echo still keeps
+every wake word while it listens. "Alexa, stop" ending listening is the separate "Stop after the wake word ends
+listening". The log says `takeover: another Echo heard the wake word better, pipeline cancelled`.
 
 **The shared key.** The Echos share a key so that nobody else on the network can join or silence them, and your Home
 Assistant vouches for each: every Echo reports a tag named after its key as scanned (Settings › Tags lists one "Tag

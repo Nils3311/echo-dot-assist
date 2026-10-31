@@ -62,8 +62,8 @@ int  arb_tell(const unsigned char to[8], const void *p, size_t n);
 int  arb_derive(const char *label, unsigned char out[32]);
 void arb_self(unsigned char id[8]);                            /* the pairing gesture: 2 min in which an Echo nearby may join; -1 not running */
 
-/* The wake word was heard with this score (signal to noise, dB x 100); prio 2 = this Echo is in a conversation or
- * ringing and owns the next wake word.  Only Echos that heard the same keyword compete ("Echo" in German and in
+/* The wake word was heard with this score (signal to noise, dB x 100); prio 2 = this Echo is ringing, in a conversation
+ * or busy with a run (main.c wake_heard says which runs) and owns the next wake word.  Only Echos that heard the same keyword compete ("Echo" in German and in
  * English is the same one).  Returns the monotonic ms at which to call arb_decide(), or 0: nobody else to ask, answer now.
  * ARB_KIOSK: score is Kiosk Satellite's (main.c kiosk_score), prio is ignored, and there is always a round. */
 long long arb_claim(const char *keyword, int score, int prio);
