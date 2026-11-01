@@ -3393,7 +3393,12 @@ static void *capture_thread(void *arg)
                 core_mic_off();
                 core_set_state(THINKING);
                 timeout_ended = 1;
-            } else if (in > (timeout_ended && state == THINKING ? THINK_AFTER_END : PIPELINE_TIMEOUT)) {
+            } else if (timeout_ended && state == THINKING && in > THINK_AFTER_END) {
+                /* streaming is off since the end of audio, so core_pipeline_finish would send Home Assistant nothing:
+                 * its run would go on, and a command whose audio came through late be carried out at any time */
+                fprintf(stderr, "pipeline timeout: no answer %d s after the end of audio, the run is cancelled\n", THINK_AFTER_END);
+                quiet_cancel();
+            } else if (in > PIPELINE_TIMEOUT) {
                 fprintf(stderr, "pipeline timeout\n");
                 core_pipeline_finish();
             }
