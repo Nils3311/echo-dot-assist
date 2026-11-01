@@ -3234,6 +3234,32 @@ static void wake_load(void)
     pthread_mutex_lock(&core_lock); wake_loaded_set(); pthread_mutex_unlock(&core_lock);
 }
 
+/* Logging only: whether the capture thread kept up with the mic while a request streamed.  The mixer hands micAsr in
+ * 50 ms blocks and keeps a few; a thread held up (a blocked write to Home Assistant under core_lock: proto_esphome.c's
+ * "link:" lines) reads them late in a burst, and what overflows the mixer's queue is lost without a word
+ * (audio_mixer.c, unlike audio_android.c, cannot tell).  Wall time against samples read since the stream started:
+ * how far behind it fell at worst, how far behind it still was at the end (lost, give or take a block), and the
+ * longest wait between two blocks.  One line on the first block after the stream stopped.  Capture thread only */
+static void cap_pace(size_t samples)
+{
+    static long long t0, last, worst, gap; static uint64_t got;
+    long long now = mono_ms();
+    if (!atomic_load(&streaming)) {
+        if (t0) {
+            long long behind = last - t0 - (long long)(got * 1000 / CAP_RATE);
+            fprintf(stderr, "capture: %.1f s of the request read in %.1f s; at worst %lld ms behind, %lld ms at the end, longest wait between blocks %lld ms\n",
+                    got / (double)CAP_RATE, (last - t0) / 1000.0, worst, behind > 0 ? behind : 0, gap);
+        }
+        t0 = 0;
+        return;
+    }
+    if (!t0) { t0 = last = now; got = 0; worst = 0; gap = 0; }
+    if (now - last > gap) gap = now - last;
+    last = now; got += samples;
+    long long behind = now - t0 - (long long)(got * 1000 / CAP_RATE);
+    if (behind > worst) worst = behind;
+}
+
 static void *capture_thread(void *arg)
 {
     FILE *dump = NULL;
@@ -3260,6 +3286,7 @@ static void *capture_thread(void *arg)
         if (atomic_exchange(&stop_pending, 0)) stop_word();        /* SIGHUP: the "stop" keyword, for tests on the PC */
         if (n == 0) continue;
         atomic_fetch_add(&cap_bytes, n);
+        cap_pace(n / 2);
         room_put(pcm, n / 2);                                      /* the room's level, for the media log */
 
         /* What the wake word hears (post-AEC micAsr), for listening on the PC.  The mixer feeds the mic only to its one

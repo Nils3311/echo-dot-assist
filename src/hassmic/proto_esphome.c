@@ -62,7 +62,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <linux/sockios.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <time.h>
@@ -1181,6 +1185,67 @@ static long long bt_next_ms, bt_asked_ms, bt_free_ms;   /* lock held: queued at;
 
 static long long now_ms(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (long long)t.tv_sec * 1000 + t.tv_nsec / 1000000; }
 
+/* Logging only: how the link to Home Assistant kept up with the mic audio of one run.  Seen in Home Assistant's
+ * recordings: runs that hung 20-35 s had only 1-30 % of their wall time in audio, without gaps or a lost link, mostly
+ * on the kitchen's Echo (-76 dBm).  Two causes look alike from there: the radio (the Echo's frames retried, its queue
+ * grows) and Home Assistant's event loop not reading (its receive buffer takes seconds of audio first, then the
+ * window closes: no retransmits, zero-window probes).  Both make the write in send_to() block, and that write runs on
+ * the capture thread under core_lock, which then neither feeds the wake word nor checks the pipeline timeout.  So per
+ * run: the most the kernel held unsent or unacknowledged (SIOCOUTQ, as ms of audio at 32 bytes/ms, framing included;
+ * the first second left out: the lead-in and the ring's replay go out at once), the longest write, and TCP_INFO's
+ * retransmits, RTT, unacknowledged segments and zero-window probes.  One line at the run's end ("link: ..."), and
+ * one at once the first time a write blocks LINK_SLOW_MS or more. */
+#define LINK_SLOW_MS 200
+static struct { int on, said; long long t0, worst_ms; size_t bytes; int outq_peak; unsigned retrans0; } link_run;   /* lock held */
+
+static int link_tcp(struct tcp_info *ti)
+{
+    socklen_t l = sizeof *ti;
+    memset(ti, 0, sizeof *ti);
+    return va_fd >= 0 && getsockopt(va_fd, IPPROTO_TCP, TCP_INFO, ti, &l) == 0;
+}
+
+static void link_tcp_str(char *o, size_t cap)
+{
+    struct tcp_info ti;
+    if (!link_tcp(&ti)) { snprintf(o, cap, "no TCP_INFO"); return; }
+    snprintf(o, cap, "retransmits +%u, rtt %u ms (+-%u), cwnd %u, unacked %u, zero-window probes %u",
+             ti.tcpi_total_retrans - link_run.retrans0, ti.tcpi_rtt / 1000, ti.tcpi_rttvar / 1000, ti.tcpi_snd_cwnd,
+             ti.tcpi_unacked, ti.tcpi_probes);
+}
+
+static void link_begin(void)
+{
+    struct tcp_info ti;
+    memset(&link_run, 0, sizeof link_run);
+    link_run.on = 1; link_run.t0 = now_ms();
+    if (link_tcp(&ti)) link_run.retrans0 = ti.tcpi_total_retrans;
+}
+
+static void link_sent(size_t len, long long took)
+{
+    int q = 0; long long now = now_ms();
+    if (!link_run.on) return;
+    link_run.bytes += len;
+    if (took > link_run.worst_ms) link_run.worst_ms = took;
+    if (now - link_run.t0 >= 1000 && va_fd >= 0 && ioctl(va_fd, SIOCOUTQ, &q) == 0 && q > link_run.outq_peak) link_run.outq_peak = q;
+    if (took >= LINK_SLOW_MS && !link_run.said) {
+        char t[160]; link_tcp_str(t, sizeof t); link_run.said = 1;
+        fprintf(stderr, "link: an audio write blocked %lld ms, %.1f s into the run (queue %d ms of audio; %s)\n",
+                took, (now - link_run.t0) / 1000.0, q / 32, t);
+    }
+}
+
+static void link_end(const char *how)
+{
+    char t[160];
+    if (!link_run.on) return;
+    link_run.on = 0;
+    link_tcp_str(t, sizeof t);
+    fprintf(stderr, "link: %s, %.1f s of audio sent in %.1f s, queue at most %d ms of audio, a write blocked at most %lld ms; %s\n",
+            how, link_run.bytes / 32000.0, (now_ms() - link_run.t0) / 1000.0, link_run.outq_peak / 32, link_run.worst_ms, t);
+}
+
 static void bt_ask(const char *msg)
 {
     PB(b, 1024); char tpl[400], m[24]; size_t j = 0; int n = 0;
@@ -1240,6 +1305,7 @@ static void start(void)
      * it ("Wake word 2" -> "Assistant 2") */
     if (core_local_wake && *core_wake_phrase()) pb_str(&b, 5, core_wake_phrase());
     send_va(VA_REQUEST, &b);
+    link_begin();
 }
 
 static void audio(const void *pcm, size_t len)
@@ -1248,7 +1314,9 @@ static void audio(const void *pcm, size_t len)
     for (size_t off = 0; off < len; off += 4096) {
         struct pb b = { buf, 0, sizeof buf };
         pb_bytes(&b, 1, (const char *)pcm + off, len - off < 4096 ? len - off : 4096);
+        long long t0 = now_ms();
         send_va(VA_AUDIO, &b);
+        link_sent(b.n, now_ms() - t0);
     }
 }
 
@@ -1256,15 +1324,17 @@ static void stop(void)
 {
     PB(a, 8); pb_uint(&a, 2, 1); send_va(VA_AUDIO, &a);        /* end of audio */
     send_va(VA_REQUEST, NULL);                                 /* start = false */
+    link_end("stopped by the Echo");
 }
 
 /* The Echo heard the request end (micend.h): the end of the audio alone, which Home Assistant takes as its own VAD's end
  * (aioesphomeapi: handle_stop(False), the audio queue closed).  start = false, as stop() sends it too, is an abort */
-static void end_audio(void) { PB(a, 8); pb_uint(&a, 2, 1); send_va(VA_AUDIO, &a); }
+static void end_audio(void) { PB(a, 8); pb_uint(&a, 2, 1); send_va(VA_AUDIO, &a); link_end("end of audio from the Echo"); }
 
 static void cancel(void)
 {
     send_va(VA_REQUEST, NULL);                                 /* start = false: abort */
+    link_end("cancelled");
     cancelled = 1;
     /* A streamed reply can be on its way already (tool calls can follow its first words).  The fetch may be waiting on
      * Home Assistant: cut its socket, and let go of it here, or the job would hold media_busy until it notices and
@@ -1321,10 +1391,10 @@ static void on_event(const unsigned char *p, const unsigned char *end)
     switch (type) {
     case EV_WAKE_END:   core_remote_wake(); break;          /* the wake word was heard in Home Assistant (-w remote) */
     case EV_STT_START:  core_set_state(LISTENING); break;
-    case EV_VAD_END:    core_mic_off(); if (core_state() == LISTENING) core_set_state(THINKING); break;
+    case EV_VAD_END:    link_end("Home Assistant's VAD end"); core_mic_off(); if (core_state() == LISTENING) core_set_state(THINKING); break;
     case EV_STT_END:    fprintf(stderr, "transcript: %s\n", text);
         if (core_transcript(text)) break;                   /* "stop" to a ring or music: the run is cancelled */
-        core_mic_off(); if (core_state() == LISTENING) core_set_state(THINKING); break;
+        link_end("speech to text ended"); core_mic_off(); if (core_state() == LISTENING) core_set_state(THINKING); break;
     case EV_INTENT_END: if (cont) core_restart_after(); break;
     case EV_TTS_START:  fprintf(stderr, "reply: %s\n", text); break;
     case EV_INTENT_PROGRESS: if (!stream_now) break;    /* streaming TTS: the URL from RUN_START can be fetched already */
@@ -1771,7 +1841,7 @@ done:
     for (int i = 0; i < MAX_CLIENTS; i++) n += clients[i].fd >= 0;
     { int keyed = 0; for (int i = 0; i < MAX_CLIENTS; i++) keyed += clients[i].fd >= 0 && clients[i].keyed && clients[i].ha_states;
       if (!keyed) core_media_link_lost(); }             /* no more states of the room's media players come */
-    if (va_fd == fd) { va_fd = -1; tts_expected = 0; core_link(n > 0, 0); }      /* the voice assistant's client left: pipelines end */
+    if (va_fd == fd) { link_end("the link closed"); va_fd = -1; tts_expected = 0; core_link(n > 0, 0); }      /* the voice assistant's client left: pipelines end */
     else if (!n) core_link(0, 0);
     pthread_mutex_unlock(&core_lock);
     free(buf); free(pt);
