@@ -96,6 +96,7 @@ int  core_soft_mute(int set);                    /* set: 0/1, or -1 to only read
 int  core_muted(void);                           /* effective */
 int  core_wake_sound(int set);                   /* same convention */
 int  core_wake_in_request(int set);              /* the request's audio from the wake word on, not after it; -1 reads */
+int  core_timeout_ends_audio(int set);           /* the listening timeout ends the audio, not the run (main.c LISTEN_TIMEOUT), -1 reads */
 int  core_end_of_request(int set);               /* the end of a request heard on the Echo (micend.h: MICEND_*), -1 reads */
 int  core_stop_ends_listening(int set);          /* "<wake word>, stop" also ends listening (main.c stop_word), -1 reads */
 int  core_bt_announce(int set);                  /* same: chime and "Connected to <name>" when a phone connects */

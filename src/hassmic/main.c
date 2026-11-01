@@ -73,6 +73,15 @@
 #include "statefile.h"
 
 #define PIPELINE_TIMEOUT 30         /* seconds in LISTENING or THINKING before giving up */
+/* Setting timeout_ends_audio (off by default).  The 30 s above is an abort (stop(): start = false), and Home Assistant
+ * then throws away the audio it has: in the user's protocol 43 runs in 15 days ended so ("stt-leer"), the audio there in
+ * 25 of 38 recordings and understood offline in 18 of 19, most after the audio had trickled in at 1-30 % of real time.
+ * With it on, a run that still LISTENS after LISTEN_TIMEOUT s (Home Assistant's VAD stops at 15 s of audio, so by then
+ * the link is behind) gets the end of audio instead, as micend's end does: Home Assistant goes on with what reached it.
+ * It then has THINK_AFTER_END s to answer before the abort as before.  The cost: a command carried out ~20 s late, or
+ * twice when it was said again meanwhile (a new wake word on this Echo still cancels this run: takeover) */
+#define LISTEN_TIMEOUT 20
+#define THINK_AFTER_END 10
 #define TTS_RATE         22050      /* assumed when audio-start carries no rate */
 
 static const char *const state_names[] = { "idle", "listening", "thinking", "speaking" };
@@ -628,6 +637,8 @@ static int stop_cut, stop_ends;
 static long long run_wake_ms;
 static char run_kw[64];
 static int takeover = 1;
+static int timeout_ends;                            /* setting timeout_ends_audio */
+static int timeout_ended;                           /* lock held: this run's audio was ended by LISTEN_TIMEOUT */
 
 static atomic_int afe_asked;                        /* the front end was asked for the wake word's energies (afe_score) */
 
@@ -680,6 +691,7 @@ static void lead_in(void)
 static void pipeline_start(uint64_t from)    /* from: where the wake word that starts it ended, 0: not a wake word */
 {
     quiet_abort = 0;
+    timeout_ended = 0;
     mic_fresh = 1;
     replay_from = from;
     replay_whole = wake_in_request && from && from == kw_end && kw_begin < kw_end;
@@ -733,6 +745,7 @@ int core_end_of_request(int set) { if (set >= 0 && set < MICEND_MODES) end_mode 
 int core_stop_ends_listening(int set) { if (set >= 0) stop_ends = set != 0; return stop_ends; }
 
 int core_takeover(int set) { if (set >= 0) takeover = set != 0; return takeover; }
+int core_timeout_ends_audio(int set) { if (set >= 0) timeout_ends = set != 0; return timeout_ends; }
 
 int core_bt_announce(int set) { if (set >= 0) use_bt_announce = set; return use_bt_announce; }
 
@@ -3372,9 +3385,18 @@ static void *capture_thread(void *arg)
         if (arb_due && (mono_ms() >= arb_due || arb_settled())) { arb_due = 0; if (arb_decide()) answer(arb_from); else { lost(); afe_done(); wake_tell("answered_elsewhere"); } }    /* after this block went out live */
 
         pthread_mutex_lock(&core_lock);
-        if (core_local_wake && (state == LISTENING || state == THINKING) && time(NULL) - state_since > PIPELINE_TIMEOUT) {
-            fprintf(stderr, "pipeline timeout\n");
-            core_pipeline_finish();
+        if (core_local_wake && (state == LISTENING || state == THINKING)) {
+            time_t in = time(NULL) - state_since;
+            if (timeout_ends && state == LISTENING && in > LISTEN_TIMEOUT && atomic_load(&streaming) && proto->end) {
+                fprintf(stderr, "pipeline timeout: still listening after %d s, the audio ends (Home Assistant goes on with what it has)\n", LISTEN_TIMEOUT);
+                proto->end();
+                core_mic_off();
+                core_set_state(THINKING);
+                timeout_ended = 1;
+            } else if (in > (timeout_ended && state == THINKING ? THINK_AFTER_END : PIPELINE_TIMEOUT)) {
+                fprintf(stderr, "pipeline timeout\n");
+                core_pipeline_finish();
+            }
         }
         pthread_mutex_unlock(&core_lock);
     }
