@@ -1238,7 +1238,7 @@ static void start(void)
     { PB(as, 8); pb_float(&as, 3, 1.0f); pb_varint(&b, 4 << 3 | 2); pb_varint(&b, as.n); pb_raw(&b, as.p, as.n); }
     /* the wake word heard: Home Assistant's duplicate check keys on it, and it runs the assistant of the select showing
      * it ("Wake word 2" -> "Assistant 2") */
-    if (core_local_wake && *core_wake_phrase()) pb_str(&b, 5, core_wake_phrase());
+    if (core_local_wake && *core_wake_phrase() && core_run_names_phrase()) pb_str(&b, 5, core_wake_phrase());
     send_va(VA_REQUEST, &b);
 }
 

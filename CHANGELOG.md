@@ -4,7 +4,8 @@ What changed for people using the Echo, newest first. Details and measurements a
 
 ## 2026-11-06
 
-- **Five new settings for how an Echo wakes up, all off by default.** `reply_end_wait`: a follow-up only after the
+- **Seven new settings for how an Echo wakes up, all as before by default.** `wake_phrase_mode`: whether a run names the
+  wake word to Home Assistant, so a follow-up no longer blocks a real call. `follow_up_sound`: the wake sound before a follow-up. `reply_end_wait`: a follow-up only after the
   reply's real end. `stop_min_score`: ignore a weak "stop". `wake_clips`: keep each wake word's audio on the Echo, to
   judge false ones afterwards. `arbitration_voice_weight` and `arbitration_voice_min`: the voice energy counts in the
   round. Off, a build does what the one before it did.

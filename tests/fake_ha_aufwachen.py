@@ -79,6 +79,28 @@ async def main(e):
     e.page.set(wake_clips="off"); await sync(cli)
     n = len(clips()); await woke(); await asyncio.sleep(1); await done()
     check(len(clips()) == n, "wake_clips off again: nothing more, what is there stays")
+
+    # wake_phrase_mode: the first run names the wake word, a follow-up only in mode 0
+    phrase = lambda: va.handle_start.args[1]
+    async def follow_up():
+        await ask("/a.wav"); await asyncio.wait_for(va.started.wait(), 5)
+    check(e.pv("wake_phrase_mode") == 0 and e.pv("follow_up_sound") == 1, "phrase and follow-up sound: as before by default")
+    await follow_up(); p0 = phrase(); await done()
+    e.page.set(wake_phrase_mode=1); await sync(cli)
+    await woke(); w1 = phrase(); await done()
+    await follow_up(); p1 = phrase(); await done()
+    e.page.set(wake_phrase_mode=2); await sync(cli)
+    await woke(); w2 = phrase(); await done()
+    e.page.set(wake_phrase_mode=0); await sync(cli)
+    check(bool(p0) and bool(w1) and not p1 and not w2, f"phrase: follow-up in mode 0 {p0!r}, wake word in 1 {w1!r}, follow-up in 1 {p1!r}, wake word in 2 {w2!r}")
+
+    # follow_up_sound off: no sound before the follow-up, the wake word's own stays
+    sounds = lambda: e.log().count("earcon:")
+    n = sounds(); await follow_up(); await asyncio.sleep(0.4); both = sounds() - n; await done()
+    e.page.set(follow_up_sound="off"); await sync(cli)
+    n = sounds(); await follow_up(); await asyncio.sleep(0.4); one = sounds() - n; await done()
+    e.page.set(follow_up_sound="on"); await sync(cli)
+    check(both == 2 and one == 1, f"follow_up_sound: {both} sounds with it, {one} without")
     await cli.disconnect()
 
 

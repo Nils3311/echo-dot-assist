@@ -265,9 +265,15 @@ static long long denoise_ns; static unsigned denoise_frames;   /* under lock: it
  *     last word.  Not by muting the mic: the wake sound and the talker's answer move back with it.
  *   stop_min_pct: a "stop" under this score is ignored; 0.40 is the model's own threshold.
  *   wake_clips: every wake word's audio into state/wakeclips (below), to judge false ones afterwards.
- *   voice_weight_pct, voice_min_db: claim() */
+ *   voice_weight_pct, voice_min_db: claim()
+ *   wake_phrase_mode: when a run names the wake word to Home Assistant, whose duplicate check keys on it (2 s per phrase).
+ *     0 always, as ever.  1 only a wake word's run: a follow-up no longer blocks a real call from another room, nor is it
+ *     turned away itself (a question asked, nobody listening).  2 never: the Echos' own round is all there is, and a round
+ *     that goes wrong has two Echos answer.  Without a phrase Home Assistant runs its first assistant: not with "Wake word 2".
+ *   follow_up_sound: the wake sound before a follow-up (on, as ever); off, the ring alone says it listens.  A wake word's own
+ *     sound stays. */
 #define REPLY_TAIL_MS 150                           /* speaker to mic stream 85 ms, and the room's tail */
-static atomic_int reply_end_wait, stop_min_pct, wake_clips;
+static atomic_int reply_end_wait, stop_min_pct, wake_clips, wake_phrase_mode, follow_up_sound = 1;
 static int voice_weight_pct, voice_min_db;          /* under lock */
 static atomic_int earcon_sounding;                  /* one of our sounds plays ... */
 static atomic_llong earcon_heard_until;             /* ... and is still in the mic stream until then (mono_ms) */
@@ -740,6 +746,9 @@ void core_remote_wake(void)
 
 int core_wake_sound(int set) { if (set >= 0) use_earcon = set; return use_earcon; }
 
+int core_wake_phrase_mode(int set) { if (set >= 0 && set <= 2) atomic_store(&wake_phrase_mode, set); return atomic_load(&wake_phrase_mode); }
+int core_follow_up_sound(int set) { if (set >= 0) atomic_store(&follow_up_sound, set != 0); return atomic_load(&follow_up_sound); }
+int core_run_names_phrase(void) { int m = atomic_load(&wake_phrase_mode); return !m || (m == 1 && run_wake); }   /* lock held */
 int core_reply_end_wait(int set) { if (set >= 0) atomic_store(&reply_end_wait, set != 0); return atomic_load(&reply_end_wait); }
 int core_stop_min_pct(int set) { if (set >= 0 && set <= 100) atomic_store(&stop_min_pct, set); return atomic_load(&stop_min_pct); }
 int core_wake_clips(int set) { if (set >= 0) atomic_store(&wake_clips, set != 0); return atomic_load(&wake_clips); }
@@ -1027,7 +1036,7 @@ void core_pipeline_finish(void)
     if (mono_ms() - last_wake_ms > 3000) wake_reset();      /* a reset puts the engine back to sleep: "<wake word>, stop" would lose its "stop" */
     if (!connected) barge_in = 0;
     if ((barge_in || !core_local_wake) && satellite_running && connected) {
-        if (barge_in) sound_request(SND_WAKE);
+        if (barge_in && (barge_from || atomic_load(&follow_up_sound))) sound_request(SND_WAKE);
         uint64_t from = barge_in ? barge_from : 0;      /* what was said after the wake word while the reply was cut */
         barge_in = 0; barge_from = 0;
         pipeline_start(from);
