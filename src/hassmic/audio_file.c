@@ -87,7 +87,8 @@ int play_write(const void *data, size_t len)
     if (tts_gain < 0.9995f)
         for (size_t i = 0; i + 1 < len; i += 2) { short v; memcpy(&v, (const char *)data + i, 2); v = (short)lrintf(v * tts_gain); fwrite(&v, 2, 1, play); }
     else fwrite(data, 1, len, play);
-    usleep((useconds_t)(len * 1e6 / (2.0 * play_ch * play_rate)));
+    /* HASSMIC_PLAY_TAKEN_AT_ONCE: as the Echo's mixer with a short reply, which takes it all and is not done playing it */
+    if (!getenv("HASSMIC_PLAY_TAKEN_AT_ONCE")) usleep((useconds_t)(len * 1e6 / (2.0 * play_ch * play_rate)));
     return 0;
 }
 

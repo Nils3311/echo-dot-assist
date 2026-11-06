@@ -28,6 +28,8 @@ void wake_close(int slot);             /* -1: every slot */
 /* Where the last accepted keyword (whichever slot) lies on the clock of Amazon's front end (ms, 16 bit, wraps), which
  * the engine reads from the stream itself.  0: not known (no such marks in the stream, PC build). */
 int  wake_afe_times(long *start, long *end);
+/* The score of the last accepted keyword of a slot, 0..1; -1: not known (no such mark, microWakeWord, PC build) */
+float wake_last_score(int slot);
 /* The engine's attributes line (JSON: wakeword_ecids, aed_ecids, ...), NULL without an engine.  DAVS asks for model
  * sets with the ids of the engine that will load them; an older engine (radar's) cannot load a set it did not name. */
 const char *wake_attributes(void);

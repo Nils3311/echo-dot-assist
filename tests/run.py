@@ -27,6 +27,8 @@ TESTS = [
     ("arbitration", [PY, "tests/fake_ha_arbitration.py"]),
     ("arb-takeover", [PY, "tests/fake_ha_arbitration_takeover.py"]),
     ("arb-noise", [PY, "tests/fake_ha_arbitration_noise.py"]),
+    ("arb-voice", [PY, "tests/fake_ha_arbitration_voice.py"]),
+    ("aufwachen", [PY, "tests/fake_ha_aufwachen.py"]),
     ("arb-media", [PY, "tests/fake_ha_arbitration_media.py"]),
     ("arb-window", [PY, "tests/fake_ha_arbitration_window.py"]),
     ("arb-kiosk", [PY, "tests/fake_ha_arbitration_kiosk.py"]),

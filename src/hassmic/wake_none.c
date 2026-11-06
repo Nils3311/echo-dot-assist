@@ -10,3 +10,4 @@ static void none_close(int slot) { (void)slot; }
 static int  none_afe_times(int slot, long *start, long *end) { (void)slot; *start = *end = 0; return getenv("HASSMIC_FAKE_AFE") != NULL; }
 const char *wake_attributes(void) { return getenv("HASSMIC_FAKE_WAKE_ATTRS"); }
 const struct wake_engine wake_vendor = { none_open, none_feed, none_reset, none_property, none_close, none_afe_times };
+float wake_last_score(int slot) { (void)slot; return -1; }

@@ -2,6 +2,13 @@
 
 What changed for people using the Echo, newest first. Details and measurements are in [PLAN.md](PLAN.md).
 
+## 2026-11-06
+
+- **Five new settings for how an Echo wakes up, all off by default.** `reply_end_wait`: a follow-up only after the
+  reply's real end. `stop_min_score`: ignore a weak "stop". `wake_clips`: keep each wake word's audio on the Echo, to
+  judge false ones afterwards. `arbitration_voice_weight` and `arbitration_voice_min`: the voice energy counts in the
+  round. Off, a build does what the one before it did.
+
 ## 2026-10-31
 
 - **The Echo in the room where music plays answers its wake words.** Music beside an Echo drowns out a wake word said

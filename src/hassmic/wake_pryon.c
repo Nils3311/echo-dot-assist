@@ -85,8 +85,12 @@ static void log_metadata(const char *js)
     else fprintf(stderr, "wake: pryon metadata: no score fields (%zu bytes of JSON)\n", strlen(js));
 }
 
+static float last_score[WAKE_SLOTS];                /* the classifier's score of the last accepted keyword + 1, 0: not known */
+float wake_last_score(int slot) { return last_score[slot] - 1; }
+
 static void read_metadata(int slot, const unsigned char *m, size_t n)
 {
+    last_score[slot] = 0;
     static char jss[WAKE_SLOTS][1 << 16];          /* each decoder calls back on its own thread */
     char *js = jss[slot]; const size_t cap = sizeof jss[0];
     size_t at = 0; z_stream z; const char *a, *b;
@@ -99,6 +103,7 @@ static void read_metadata(int slot, const unsigned char *m, size_t n)
     inflate(&z, Z_FINISH); inflateEnd(&z);
     js[cap - 1 - z.avail_out] = 0;
     log_metadata(js);
+    if ((a = strstr(js, "\"kwClassificationScore\":"))) last_score[slot] = (float)atof(strchr(a, ':') + 1) + 1;
     if (!strstr(js, "\"has_audio_lsb_metadata\":1") || !(a = strstr(js, "\"timestamp_before_ww_start\":"))
         || !(b = strstr(js, "\"timestamp_before_ww_end\":"))) return;
     afe_start[slot] = atol(strchr(a, ':') + 1); afe_end[slot] = atol(strchr(b, ':') + 1);

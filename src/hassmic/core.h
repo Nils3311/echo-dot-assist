@@ -205,6 +205,11 @@ int    core_takeover(int set);
 /* The noise cap (main.c claim, noisecap.h): the front end's ambient counts at most this many times the Echo's learned
  * quiet level.  0..10, 0 = off; -1 reads.  Lock held */
 int    core_noise_cap(int set);
+int    core_reply_end_wait(int set);
+int    core_stop_min_pct(int set);
+int    core_wake_clips(int set);
+int    core_voice_weight(int set);
+int    core_voice_min(int set);
 enum { MUSIC_SENDSPIN = 1, MUSIC_BLUETOOTH = 2 };
 void   core_music(int source, int on);                      /* a music stream runs: the wake word threshold follows */
 void   core_bt_device(const char *name, int on);            /* a Bluetooth speaker source connected / went (not the lock) */

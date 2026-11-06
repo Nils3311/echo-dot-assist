@@ -34,6 +34,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #ifdef __ANDROID__
 #include <sys/system_properties.h>
 #endif
@@ -257,6 +258,17 @@ static int end_mode;                                /* under lock: setting end_o
 static int mic_denoise;                             /* under lock: noise reduction ahead of the gain (micdenoise.h):
                                                       * 0 off, 1 low, 2 medium, 3 high */
 static long long denoise_ns; static unsigned denoise_frames;   /* under lock: its cost in the running pipeline */
+/* Settings of this branch, all off by default: a build with them off does what the one before it did.
+ *   reply_end_wait: "speaking" and with it a follow-up wait for the reply's real end.  play_close's MixerDrain returns at
+ *     once (mixer_api.h), so "speaking" ended when the mixer had taken the data: on 29 replies ending in "?" a median
+ *     0.38 s and one in ten 0.61 s before their WAV was over, "Ja?" (0.64 s) after 0.05 s, and the next run heard our own
+ *     last word.  Not by muting the mic: the wake sound and the talker's answer move back with it.
+ *   stop_min_pct: a "stop" under this score is ignored; 0.40 is the model's own threshold.
+ *   wake_clips: every wake word's audio into state/wakeclips (below), to judge false ones afterwards.
+ *   voice_weight_pct, voice_min_db: claim() */
+#define REPLY_TAIL_MS 150                           /* speaker to mic stream 85 ms, and the room's tail */
+static atomic_int reply_end_wait, stop_min_pct, wake_clips;
+static int voice_weight_pct, voice_min_db;          /* under lock */
 static atomic_int earcon_sounding;                  /* one of our sounds plays ... */
 static atomic_llong earcon_heard_until;             /* ... and is still in the mic stream until then (mono_ms) */
 /* the last ones as spans of the capture clock in the mic stream (to: LLONG_MAX while it plays), one sound starting
@@ -728,6 +740,11 @@ void core_remote_wake(void)
 
 int core_wake_sound(int set) { if (set >= 0) use_earcon = set; return use_earcon; }
 
+int core_reply_end_wait(int set) { if (set >= 0) atomic_store(&reply_end_wait, set != 0); return atomic_load(&reply_end_wait); }
+int core_stop_min_pct(int set) { if (set >= 0 && set <= 100) atomic_store(&stop_min_pct, set); return atomic_load(&stop_min_pct); }
+int core_wake_clips(int set) { if (set >= 0) atomic_store(&wake_clips, set != 0); return atomic_load(&wake_clips); }
+int core_voice_weight(int set) { if (set >= 0 && set <= 100) voice_weight_pct = set; return voice_weight_pct; }
+int core_voice_min(int set) { if (set >= 0 && set <= 90) voice_min_db = set; return voice_min_db; }
 int core_wake_in_request(int set) { if (set >= 0) wake_in_request = set != 0; return wake_in_request; }
 int core_end_of_request(int set) { if (set >= 0 && set < MICEND_MODES) end_mode = set; return end_mode; }
 int core_stop_ends_listening(int set) { if (set >= 0) stop_ends = set != 0; return stop_ends; }
@@ -2025,8 +2042,25 @@ static void answer(uint64_t from)                   /* capture thread: act on th
  * Before the media bonus, the noise cap (noisecap.c, arbitration_noise_cap): the front end's ambient counts at most
  * 3x this Echo's learned quiet level, so that its own cooker hood does not hand the wake word to the next room.
  * voice, ambient: the front end's energies when the score is theirs, else ambient -1 */
+/* The score is the voice over the room: an Echo beside its own noise loses to one further from the talker (on 6 rounds
+ * Nils marked as the wrong room, in 4 the right Echo had the higher voice energy and the lower score).  Settings, both
+ * 0 = off:
+ *   arbitration_voice_min (dB of the front end's voice energy): under it no claim and no answer, as no talker is there.
+ *     Not for an Echo in a conversation or ringing, nor without a front end's reading.
+ *   arbitration_voice_weight (%): that share of the voice energy in dB is added to the score, 50: score + 0.5 x dB.  A
+ *     claim stays a number, so every Echo of a network has to run with the same weight; a claim without a reading
+ *     counts VOICE_DB_UNKNOWN, the median of 242 commands. */
+#define VOICE_DB_UNKNOWN 58.0
 static void claim(const char *kw, int score, int prio, uint64_t end, double voice, double ambient)   /* capture thread */
 {
+    pthread_mutex_lock(&core_lock); int vw = voice_weight_pct, vmin = voice_min_db; pthread_mutex_unlock(&core_lock);
+    int ours = arb_mode(-1) == ARB_HASSMIC;
+    double voice_db = ambient >= 0 ? 10 * log10(voice + 1) : VOICE_DB_UNKNOWN;
+    if (ours && vmin && ambient >= 0 && !prio && voice_db < vmin) {
+        fprintf(stderr, "arbitration: voice %.1f dB, under %d: no talker, no claim\n", voice_db, vmin);
+        afe_done(); wake_tell("no_speech");
+        return;
+    }
     { char why[160], fl[48], qs[48] = ""; pthread_mutex_lock(&core_lock); int pct = media_ambient, cap = noise_cap, here = media_here(why, sizeof why); pthread_mutex_unlock(&core_lock);
       int f = atomic_load(&floor_cdb);            /* the media log's: the room of the last 5 s, the wake word mostly above it */
       if (f == INT_MIN) fl[0] = 0; else snprintf(fl, sizeof fl, "; room floor %.1f dBFS", f / 100.0);
@@ -2051,6 +2085,11 @@ static void claim(const char *kw, int score, int prio, uint64_t end, double voic
      * scanning while this round listens: the wait it took (none when nobody was worth waiting for, arb.c "Rivals"),
      * then the claims of Echos that heard it a little later and the winner's "answers", 1 s at least.  Right after the
      * claim: its first copy is out before the scan stops anyway, the other two 30 and 80 ms on */
+    if (ours && vw) {
+        int plus = (int)lround(vw * voice_db);          /* the score's unit is 1/100 dB, vw is in %: vw / 100 x dB x 100 */
+        fprintf(stderr, "arbitration: voice %.1f dB at %d %%: score %d -> %d\n", voice_db, vw, score, score + plus);
+        score += plus;
+    }
     long long due = arb_claim(kw, score, prio), w = due ? due - mono_ms() : 0;
     ble_quiet(w + 500 > 1000 ? (int)w + 500 : 1000);
     if (!due) { answer(end); return; }
@@ -2143,6 +2182,92 @@ static int wake_open_word(int slot, const struct core_wake_word *w)
     return r;
 }
 
+static int stop_too_weak(float score)               /* never while a timer rings: the model's lower threshold is meant for that */
+{
+    int min = atomic_load(&stop_min_pct);
+    if (!min || score < 0 || atomic_load(&alarm_on) || score * 100 >= min) return 0;
+    fprintf(stderr, "wake: STOP at %.3f, under %d %%, ignored\n", score, min);
+    return 1;
+}
+
+/* Setting wake_clips: each wake word's audio as it reached the wake word engine (the ring, before any gain), from
+ * CLIP_PRE before to CLIP_POST after it, into state/wakeclips/<UTC>_<score x 1000>.wav, 16 kHz mono, readable by root
+ * only: the log line of the round names the file.  Nothing leaves the Echo.  What wakes an Echo falsely is in no
+ * recording otherwise: Home Assistant's start after the word.  Written off the capture thread, the newest CLIP_KEEP
+ * kept, nothing written with under CLIP_FREE_MB free. */
+#define CLIP_PRE (CAP_RATE / 2)
+#define CLIP_POST (CAP_RATE * 3 / 10)
+#define CLIP_MAX (CAP_RATE * 4)
+#define CLIP_KEEP 200
+#define CLIP_FREE_MB 50
+static atomic_ullong clip_begin, clip_end;          /* detector thread to capture thread; clip_end 0: none asked */
+static atomic_int clip_score;                       /* score x 1000, -1: not known */
+struct clip_job { char path[300], tmp[310], dir[256]; size_t n; int16_t pcm[]; };
+
+static int clip_old(const void *a, const void *b) { return strcmp(*(char *const *)a, *(char *const *)b); }
+static void *clip_thread(void *arg)
+{
+    struct clip_job *j = arg; struct statvfs v;
+    uint32_t bytes = (uint32_t)(j->n * 2), rate = CAP_RATE, brate = CAP_RATE * 2;
+    mkdir(j->dir, 0700);
+    if (statvfs(j->dir, &v) || (unsigned long long)v.f_bavail * v.f_frsize < (unsigned long long)CLIP_FREE_MB << 20) {
+        fprintf(stderr, "wake clip: under %d MB free, not written\n", CLIP_FREE_MB);
+        free(j); return NULL;
+    }
+    int fd = open(j->tmp, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (fd >= 0) {
+        unsigned char h[44] = "RIFF....WAVEfmt ";
+        uint32_t riff = 36 + bytes, sixteen = 16; uint16_t pcm = 1, ch = 1, align = 2, bits = 16;
+        memcpy(h + 4, &riff, 4); memcpy(h + 16, &sixteen, 4); memcpy(h + 20, &pcm, 2); memcpy(h + 22, &ch, 2);
+        memcpy(h + 24, &rate, 4); memcpy(h + 28, &brate, 4); memcpy(h + 32, &align, 2); memcpy(h + 34, &bits, 2);
+        memcpy(h + 36, "data", 4); memcpy(h + 40, &bytes, 4);
+        int ok = write(fd, h, sizeof h) == (ssize_t)sizeof h && write(fd, j->pcm, bytes) == (ssize_t)bytes;
+        close(fd);
+        if (ok) rename(j->tmp, j->path); else unlink(j->tmp);
+    }
+    DIR *d = opendir(j->dir);
+    if (d) {
+        static char *names[CLIP_KEEP * 2]; size_t n = 0; struct dirent *e;
+        while ((e = readdir(d)) && n < sizeof names / sizeof names[0]) if (strstr(e->d_name, ".wav")) names[n++] = strdup(e->d_name);
+        closedir(d);
+        qsort(names, n, sizeof names[0], clip_old);
+        for (size_t i = 0; i < n; i++) {
+            if (i + CLIP_KEEP < n) { char p[600]; snprintf(p, sizeof p, "%s/%s", j->dir, names[i]); unlink(p); }
+            free(names[i]);
+        }
+    }
+    free(j);
+    return NULL;
+}
+
+static void clip_ask(uint64_t begin, uint64_t end, float score)
+{
+    if (!atomic_load(&wake_clips) || atomic_load(&clip_end)) return;      /* one at a time: the next word's is left out */
+    atomic_store(&clip_begin, begin); atomic_store(&clip_score, score < 0 ? -1 : (int)lroundf(score * 1000));
+    atomic_store(&clip_end, end);
+}
+
+static void clip_take(void)                         /* capture thread: once the ring has what comes after the word */
+{
+    uint64_t end = atomic_load(&clip_end), begin = atomic_load(&clip_begin);
+    if (!end || ring_n < end + CLIP_POST) return;
+    atomic_store(&clip_end, 0);
+    uint64_t a = begin > CLIP_PRE ? begin - CLIP_PRE : 0, b = end + CLIP_POST;
+    if (b - a > CLIP_MAX) a = b - CLIP_MAX;
+    if (ring_n > RING_SAMPLES && a < ring_n - RING_SAMPLES) a = ring_n - RING_SAMPLES;
+    struct clip_job *j = malloc(sizeof *j + (size_t)(b - a) * 2);
+    if (!j) return;
+    const char *dir = getenv("HASSMIC_STATE"); char at[32]; time_t now = time(NULL); struct tm tm; pthread_t t;
+    gmtime_r(&now, &tm); strftime(at, sizeof at, "%Y%m%dT%H%M%SZ", &tm);
+    snprintf(j->dir, sizeof j->dir, "%s/wakeclips", dir ? dir : "/data/local/hassmic/state");
+    snprintf(j->path, sizeof j->path, "%s/%s_%03d.wav", j->dir, at, atomic_load(&clip_score));
+    snprintf(j->tmp, sizeof j->tmp, "%s.tmp", j->path);
+    j->n = (size_t)(b - a);
+    for (uint64_t i = a; i < b; i++) j->pcm[i - a] = ring[i % RING_SAMPLES];
+    fprintf(stderr, "wake clip: %s\n", strrchr(j->path, '/') + 1);
+    if (pthread_create(&t, NULL, clip_thread, j)) free(j); else pthread_detach(t);
+}
+
 static void on_wake(int slot, const char *keyword, uint64_t begin, uint64_t end)
 {
     if (!core_local_wake) return;
@@ -2158,7 +2283,8 @@ static void on_wake(int slot, const char *keyword, uint64_t begin, uint64_t end)
     }
     /* "stop" comes from the decoder that heard its wake word just before; another one on the same model set (one
      * multi-keyword en-US set in both slots) is awake too, and its "stop" would stop twice */
-    if (!strcasecmp(keyword, "STOP")) { if (slot == atomic_load(&wake_slot_heard)) stop_word(); return; }
+    if (!strcasecmp(keyword, "STOP")) { if (slot == atomic_load(&wake_slot_heard) && !stop_too_weak(wake_last_score(slot))) stop_word(); return; }
+    clip_ask(begin, end, wake_last_score(slot));
     wake_tell("detected");
     last_wake_ms = mono_ms();
     atomic_store(&wake_slot_heard, slot);
@@ -2239,6 +2365,7 @@ static void q_push(int kind, int media, unsigned rate, unsigned ch, const void *
 static void *playback_thread(void *arg)
 {
     int open = 0;
+    long long voice_ms = 0, voice_bytes = 0; unsigned voice_bps = 0;   /* reply_end_wait: since the first byte, at what rate */
     (void)arg;
     for (;;) {
         pthread_mutex_lock(&q_lock);
@@ -2256,15 +2383,23 @@ static void *playback_thread(void *arg)
         switch (it->kind) {
         case Q_START:
             if (open) play_close(1);        /* e.g. announcement chime followed by the message */
+            voice_ms = 0; voice_bytes = 0; voice_bps = it->rate * it->ch * 2;
             tts_kind(it->media);            /* the TTS stream's volume for what comes now */
             open = play_open(it->rate, it->ch) == 0;
             if (open) { atomic_store(&tts_on, 1); playback_hint(); }
             if (!open) fprintf(stderr, "play: open %u Hz x%u failed\n", it->rate, it->ch);
             break;
         case Q_DATA:
+            if (!voice_ms) voice_ms = mono_ms();
+            voice_bytes += it->len;
             if (open && play_write(it->data, it->len) < 0) { play_close(0); open = 0; }
             break;
         case Q_STOP:
+            if (open && atomic_load(&reply_end_wait) && voice_ms && voice_bps) {
+                long long end = voice_ms + voice_bytes * 1000 / voice_bps + REPLY_TAIL_MS, from = mono_ms();
+                while (mono_ms() < end && !atomic_load(&flush_playback)) usleep(20000);      /* a barge-in ends it now */
+                fprintf(stderr, "reply: waited %lld ms for its real end\n", mono_ms() - from);
+            }
             if (open) { play_close(1); open = 0; }
             atomic_store(&tts_on, 0); playback_hint();
             atomic_store(&flush_playback, 0);
@@ -3255,9 +3390,13 @@ static void *capture_thread(void *arg)
               pthread_mutex_lock(&core_lock); kw_begin = b; kw_end = e; kw_slot = 0;
               if (getenv("HASSMIC_FAKE_KEYWORD")) keyword_db = 10 * log10f((ring_power(b, e) + 1) / (32768.0f * 32768.0f));   /* as on_wake: the tail is looked for */
               pthread_mutex_unlock(&core_lock);
+              clip_ask(b, e, -1);
               wake_heard(b, e, 1);
           } }
-        if (atomic_exchange(&stop_pending, 0)) stop_word();        /* SIGHUP: the "stop" keyword, for tests on the PC */
+        if (atomic_exchange(&stop_pending, 0)) {                   /* SIGHUP: the "stop" keyword, for tests on the PC */
+            const char *sc = getenv("HASSMIC_TEST_STOP_SCORE");
+            if (!stop_too_weak(sc ? (float)atof(sc) : -1)) stop_word();
+        }
         if (n == 0) continue;
         atomic_fetch_add(&cap_bytes, n);
         room_put(pcm, n / 2);                                      /* the room's level, for the media log */
@@ -3341,6 +3480,7 @@ static void *capture_thread(void *arg)
             wake_heard(b, e, 0);
         }
         if (score_due) score_wait();
+        clip_take();
         afe_late_check();
         if (arb_due && (mono_ms() >= arb_due || arb_settled())) { arb_due = 0; if (arb_decide()) answer(arb_from); else { lost(); afe_done(); wake_tell("answered_elsewhere"); } }    /* after this block went out live */
 

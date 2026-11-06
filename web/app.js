@@ -207,7 +207,7 @@ const MOVED = { arbitration: 'echos', bluetooth_audio: 'media', bluetooth_speake
 // last, in a card of its own, so nothing is ever lost from the page
 const LAYOUT = {
   voice: [['Microphone', 'mic_level', 'noise_reduction'], ['Mute and wake sound', 'mute', 'do_not_disturb', 'wake_sound', 'wake_sound_removal'],
-          ['Requests', 'wake_word_in_request', 'end_of_request', 'stop_ends_listening'], ['Timers', 'timer_ring', 'timer_sound', 'timer_stop_any']],
+          ['Requests', 'wake_word_in_request', 'end_of_request', 'stop_ends_listening', 'stop_min_score', 'reply_end_wait', 'wake_clips'], ['Timers', 'timer_ring', 'timer_sound', 'timer_stop_any']],
   wake: [['Engine', 'wake_engine'], ['How it hears you', 'speech_language', 'wake_word_adaptation']],
   lights: [['Brightness', 'led_auto_brightness', 'led_brightness'], ['Position', 'ring_rotation', 'light_band']],
 };
@@ -370,6 +370,10 @@ const HELP = {
     } },
   arbitration_noise_cap: { parent: 'arbitration', sub: true, when: () => settingValue('arbitration_mode') !== 'kiosk',
     help: 'Loud noise next to this Echo, such as a cooker hood, counts against it as if it were the room\'s background, and a wake word you said right in front of it can go to the next room. The Echo learns how loud its room is when quiet (from wake words heard without media playing, the last 64) and counts its background at most this many times that level. Takes effect once it has learned from 10 wake words. 0: off. Default 3; best the same on every Echo.' },
+  arbitration_voice_weight: { parent: 'arbitration', sub: true, when: () => settingValue('arbitration_mode') !== 'kiosk',
+    help: 'Adds this share of the voice energy in dB to the score, so that being closer counts as well as being in a quiet room. Set the same on every Echo. 0: off.' },
+  arbitration_voice_min: { parent: 'arbitration', sub: true, when: () => settingValue('arbitration_mode') !== 'kiosk',
+    help: 'Under this voice energy the Echo neither claims nor answers a wake word: nobody is talking to it. 0: off.' },
   arbitration_takeover: { parent: 'arbitration', help: 'An Echo that woke up by mistake (the TV, children in another room) listens for up to 15 seconds and kept every wake word said meanwhile. With this, after 2 s of listening (or thinking) it gives way: when it hears a new wake word that another Echo heard better, it stops quietly and that Echo answers; when it heard you best itself, it starts listening afresh. A wake word it did not hear leaves it alone. Echos in a conversation (a follow-up question), busy with a reply or ringing keep the next wake word. "<wake word>, stop" is the separate setting "Stop after the wake word ends listening". Off: as before. On by default; set the same on every Echo.' },
   sound_detection: { icon: 'wave', ha: ['Sound (event)'], help: 'Home Assistant gets a "Sound" event for smoke and CO alarms, breaking glass, barking and more. Amazon\'s Alexa Guard model listens for those, and for a crying baby, snoring, coughing, running water and beeping appliances. A stock Echo double-checks every hit in Amazon\'s cloud; this one cannot.',
     note: 'Less reliable than on a stock Echo: treat events as hints, never as a replacement for a smoke detector.',
