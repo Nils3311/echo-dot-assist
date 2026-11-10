@@ -60,7 +60,7 @@ static void path(char *out, size_t cap, const char *file) { snprintf(out, cap, "
 
 /* ---------------------------------------------------------------- the table */
 
-enum id { WAKE_ENGINE, SPEECH_LANG, WAKE_ADAPT, MIC_LEVEL, DENOISE, WAKE_SOUND, WAKE_SOUND_REMOVAL, MUTE, DND, TIMER_RING, TIMER_SOUND, TIMER_STOP_ANY, STOP_ENDS, WAKE_IN_REQ, WAKE_PHRASE_MODE, FOLLOW_UP_SOUND, REPLY_END_WAIT, STOP_MIN, WAKE_CLIPS, END_REQ, BT_ANNOUNCE, BT_LANG, LED_AUTO, LED_LEVEL, RING_ROT, BAND, ARB, ARB_MODE, ARB_AUTO, ARB_WINDOW, ARB_OFFSET, ARB_MEDIA_PLAYERS, ARB_MEDIA_AMBIENT, ARB_NOISE_CAP, ARB_VOICE_WEIGHT, ARB_VOICE_MIN, TAKEOVER, SOUND, WHISPER, WAKE_EVENTS, REQUEST_TEXT, WIFI_MOTION,
+enum id { WAKE_ENGINE, SPEECH_LANG, WAKE_ADAPT, MIC_LEVEL, DENOISE, WAKE_SOUND, WAKE_SOUND_REMOVAL, MUTE, DND, TIMER_RING, TIMER_SOUND, TIMER_STOP_ANY, STOP_ENDS, WAKE_IN_REQ, WAKE_PHRASE_MODE, FOLLOW_UP_SOUND, REPLY_END_WAIT, STOP_MIN, WAKE_CLIPS, LISTEN_MODE, END_REQ, BT_ANNOUNCE, BT_LANG, LED_AUTO, LED_LEVEL, RING_ROT, BAND, ARB, ARB_MODE, ARB_AUTO, ARB_WINDOW, ARB_OFFSET, ARB_MEDIA_PLAYERS, ARB_MEDIA_AMBIENT, ARB_NOISE_CAP, ARB_VOICE_WEIGHT, ARB_VOICE_MIN, TAKEOVER, SOUND, WHISPER, WAKE_EVENTS, REQUEST_TEXT, WIFI_MOTION,
           WIFI_SENS, LIGHT_SENSOR, BT_AUDIO, BT_SPEAKER, BT_OUT_DELAY, BT_OUT_AWAKE, BT_OUT_STAY, DROPIN, DROPIN_ANSWER, UPDATES, HTTPS_VERIFY, SS_UNPAIRED, EQ_BASS, EQ_MID, EQ_TREBLE, SPK_GAIN, VOLUME, VOL_SPLIT,
           ASSIST_LINK, ASSIST_LEVEL, ASSIST_OFFSET, SOUNDS_LINK, SOUNDS_LEVEL, SOUNDS_OFFSET, TIMER_LINK, TIMER_LEVEL, TIMER_OFFSET,
           CALL_LINK, CALL_LEVEL, CALL_OFFSET, NSET };
@@ -98,6 +98,8 @@ static const struct setting table[NSET] = {
     [REPLY_END_WAIT] = { "reply_end_wait", "Follow-up after the reply's real end", "Voice", NULL, S_BOOL, 0, 1, 1, 0 },
     [STOP_MIN]    = { "stop_min_score", "Ignore a stop under this score", "Voice", "%", S_INT, 0, 100, 1, 0 },
     [WAKE_CLIPS]  = { "wake_clips", "Keep each wake word's audio on this Echo", "Voice", NULL, S_BOOL, 0, 1, 1, 0 },
+    /* main.c listening_apply: off leaves the front end adapting during a request (trials with AFE.cfg's leaky update) */
+    [LISTEN_MODE] = { "listening_mode", "Front end holds its beam and cancellers during a request", "Voice", NULL, S_BOOL, 0, 1, 1, 0 },
     /* micend.c, issue #66: ESPHome only (Wyoming has no end of audio here) */
     [END_REQ]     = { "end_of_request", "End of request heard on the Echo (experimental)", "Voice", NULL, S_CHOICE, 0, 0, 1, 0 },
     [BT_ANNOUNCE] = { "bluetooth_announcements", "Bluetooth announcements", "Bluetooth", NULL, S_BOOL, 0, 1, 1, 0 },
@@ -256,6 +258,7 @@ int settings_get(const struct setting *s)
     case REPLY_END_WAIT: return core_reply_end_wait(-1);
     case STOP_MIN: return core_stop_min_pct(-1);
     case WAKE_CLIPS: return core_wake_clips(-1);
+    case LISTEN_MODE: return core_listening_mode(-1);
     case ARB_VOICE_WEIGHT: return core_voice_weight(-1);
     case ARB_VOICE_MIN: return core_voice_min(-1);
     case END_REQ: return core_end_of_request(-1);
@@ -324,6 +327,7 @@ static void put(enum id i, int v)
     case REPLY_END_WAIT: core_reply_end_wait(v); break;
     case STOP_MIN: core_stop_min_pct(v); break;
     case WAKE_CLIPS: core_wake_clips(v); break;
+    case LISTEN_MODE: core_listening_mode(v); break;
     case ARB_VOICE_WEIGHT: core_voice_weight(v); break;
     case ARB_VOICE_MIN: core_voice_min(v); break;
     case END_REQ: core_end_of_request(v); break;

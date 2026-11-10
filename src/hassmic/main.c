@@ -667,10 +667,16 @@ static void afe_done(void)                          /* any thread: no command fo
  * must keep adapting while nobody talks: set only from Home Assistant's "wake word heard" (core_remote_wake) to the end
  * of the command, as stock does around its own wake word. */
 static int listen_pipe, listen_call;                /* lock held: a command is spoken; a Drop In runs (core_dropin) */
+/* Setting listening_mode (on by default: as before).  Off: a request leaves the front end adapting, for trials with
+ * AFE.cfg's "ARA_v2 Enable Leaky Update" (notes 2026-11-10: with it the talker is no longer taken for interference, and
+ * without the utterance state the interference canceller keeps working on music while the command is spoken, and the
+ * beam merger may follow the talker).  A Drop In keeps its state either way. */
+static atomic_int listen_mode = 1;
+int core_listening_mode(int set) { if (set >= 0) atomic_store(&listen_mode, set != 0); return atomic_load(&listen_mode); }
 static void listening_apply(void)
 {
     static int is = -1;
-    int on = listen_pipe || listen_call;
+    int on = (listen_pipe && atomic_load(&listen_mode)) || listen_call;
     if (on == is) return;
     is = on;
     afe_listening(on);
@@ -1005,6 +1011,7 @@ static void mic_stopped(void)
         fprintf(stderr, ")\n");
         mic_end.mode = MICEND_OFF;
     }
+    { int b = ring_beam(); if (b >= 0) fprintf(stderr, "end of request: beam %d\n", b); }
     listening(0);
     afe_done();
     if (denoise_frames) fprintf(stderr, "denoise: %.1f s of audio took %.0f ms of CPU\n", denoise_frames / 100.0, denoise_ns / 1e6);
@@ -1390,6 +1397,7 @@ static void *afe_thread(void *arg)
     int score;
     (void)arg;
     atomic_store(&afe_got, afe_score(afe_ts, afe_te, &score, &afe_voice, &afe_ambient) ? score : INT_MIN);
+    if (!atomic_load(&listen_mode)) afe_done();     /* the reading put the front end into its utterance state: out again */
     atomic_store(&afe_busy, 0);                     /* last: once it is 0, afe_asked says what the reading did */
     return NULL;
 }
@@ -2123,6 +2131,7 @@ static void wake_heard(uint64_t begin, uint64_t end, int simulated)     /* captu
         return;
     }
     int own = wake_score(begin, end, simulated);
+    { int b = ring_beam(); if (b >= 0) fprintf(stderr, "wake: beam %d\n", b); }      /* which way the front end listens (0-7) */
     /* the front end's score only for a round: arbitration off, or nobody to ask, and the claim is only a log line */
     if (!arb_rounds() || !afe_start(simulated)) { claim(kw, own, prio, end, 0, -1); return; }
     pend.end = end; pend.own = own; pend.prio = prio; snprintf(pend.kw, sizeof pend.kw, "%s", kw);

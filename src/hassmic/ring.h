@@ -29,6 +29,7 @@ int  ring_generate(const char *dir);
  * reloaded: after ring_reload, without the module's lock (custom_changed: ring_custom() or ring_per_led() is not
  * what it was) */
 void ring_start(void (*run)(const char *op, const char *name), void (*reloaded)(int custom_changed));
+int  ring_beam(void);                       /* the front end's beam (0-7) as ledcontroller has it; -1 unknown, -2 busy */
 int  ring_custom(void);                     /* ours are in ledcontroller: Home Assistant gets the light */
 int  ring_assistant_steps(void);            /* and "hassmic_assist_NN": stock's volume_step-NN in cyan */
 int  ring_per_led(void);                    /* and each LED's own layer: the fill, rotation and LED by LED (issue #57) */

@@ -810,6 +810,16 @@ static int beam_now(void)
     return v;
 }
 
+/* For the log (main.c: the beam at the wake word and at the end of the request).  Any thread; -2 while the module's
+ * lock is taken: never waits, the caller may hold the core's lock */
+int ring_beam(void)
+{
+    if (pthread_mutex_trylock(&lock)) return -2;
+    int b = beam_now();
+    pthread_mutex_unlock(&lock);
+    return b;
+}
+
 static int busy(long long now)
 {
     for (int i = 0; i < nshown; i++) if (shown[i].ms < 0 || now < shown[i].at + shown[i].ms) return 1;
