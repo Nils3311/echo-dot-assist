@@ -2,6 +2,13 @@
 
 What changed for people using the Echo, newest first. Details and measurements are in [PLAN.md](PLAN.md).
 
+
+## 2026-11-14
+
+- **"Alexa, stop the music" stops the music.** With `stop_ends_listening` on, the stop ended listening and the
+  request was gone, while the room's player played on. Now, while a player of `arbitration_media_players` plays, the
+  Echo keeps listening and Home Assistant hears what the stop was about. Setting `stop_media_listens`, on by default.
+
 ## 2026-11-06
 
 - **Seven new settings for how an Echo wakes up, all as before by default.** `wake_phrase_mode`: whether a run names the

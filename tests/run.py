@@ -36,6 +36,7 @@ TESTS = [
     ("arb-join", [PY, "tests/fake_ha_arbitration_join.py"]),
     ("arb-afe", [PY, "tests/fake_ha_arbitration_afe.py"]),
     ("stop-word", [PY, "tests/fake_ha_stop_word.py"]),
+    ("stop-media", [PY, "tests/fake_ha_stop_media.py"]),
     ("esphome-features", [PY, "tests/fake_ha_esphome_features.py"]),
     ("esphome-address", [PY, "tests/fake_ha_esphome_address.py"]),
     ("esphome", [PY, "tests/fake_ha_esphome.py"]),

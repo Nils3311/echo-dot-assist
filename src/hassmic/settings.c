@@ -60,7 +60,7 @@ static void path(char *out, size_t cap, const char *file) { snprintf(out, cap, "
 
 /* ---------------------------------------------------------------- the table */
 
-enum id { WAKE_ENGINE, SPEECH_LANG, WAKE_ADAPT, MIC_LEVEL, DENOISE, WAKE_SOUND, WAKE_SOUND_REMOVAL, MUTE, DND, TIMER_RING, TIMER_SOUND, TIMER_STOP_ANY, STOP_ENDS, WAKE_IN_REQ, WAKE_PHRASE_MODE, FOLLOW_UP_SOUND, REPLY_END_WAIT, STOP_MIN, WAKE_CLIPS, LISTEN_MODE, END_REQ, BT_ANNOUNCE, BT_LANG, LED_AUTO, LED_LEVEL, RING_ROT, BAND, ARB, ARB_MODE, ARB_AUTO, ARB_WINDOW, ARB_OFFSET, ARB_MEDIA_PLAYERS, ARB_MEDIA_AMBIENT, ARB_NOISE_CAP, ARB_VOICE_WEIGHT, ARB_VOICE_MIN, TAKEOVER, SOUND, WHISPER, WAKE_EVENTS, REQUEST_TEXT, WIFI_MOTION,
+enum id { WAKE_ENGINE, SPEECH_LANG, WAKE_ADAPT, MIC_LEVEL, DENOISE, WAKE_SOUND, WAKE_SOUND_REMOVAL, MUTE, DND, TIMER_RING, TIMER_SOUND, TIMER_STOP_ANY, STOP_ENDS, WAKE_IN_REQ, WAKE_PHRASE_MODE, FOLLOW_UP_SOUND, STOP_MEDIA, REPLY_END_WAIT, STOP_MIN, WAKE_CLIPS, LISTEN_MODE, END_REQ, BT_ANNOUNCE, BT_LANG, LED_AUTO, LED_LEVEL, RING_ROT, BAND, ARB, ARB_MODE, ARB_AUTO, ARB_WINDOW, ARB_OFFSET, ARB_MEDIA_PLAYERS, ARB_MEDIA_AMBIENT, ARB_NOISE_CAP, ARB_VOICE_WEIGHT, ARB_VOICE_MIN, TAKEOVER, SOUND, WHISPER, WAKE_EVENTS, REQUEST_TEXT, WIFI_MOTION,
           WIFI_SENS, LIGHT_SENSOR, BT_AUDIO, BT_SPEAKER, BT_OUT_DELAY, BT_OUT_AWAKE, BT_OUT_STAY, DROPIN, DROPIN_ANSWER, UPDATES, HTTPS_VERIFY, SS_UNPAIRED, EQ_BASS, EQ_MID, EQ_TREBLE, SPK_GAIN, VOLUME, VOL_SPLIT,
           ASSIST_LINK, ASSIST_LEVEL, ASSIST_OFFSET, SOUNDS_LINK, SOUNDS_LEVEL, SOUNDS_OFFSET, TIMER_LINK, TIMER_LEVEL, TIMER_OFFSET,
           CALL_LINK, CALL_LEVEL, CALL_OFFSET, NSET };
@@ -94,6 +94,7 @@ static const struct setting table[NSET] = {
     [WAKE_IN_REQ] = { "wake_word_in_request", "Wake word in the request", "Voice", NULL, S_BOOL, 0, 1, 1, 0 },
     /* main.c, all as before by default */
     [WAKE_PHRASE_MODE] = { "wake_phrase_mode", "Name the wake word to Home Assistant: 0 always, 1 wake word only, 2 never", "Voice", NULL, S_INT, 0, 2, 1, 0 },
+    [STOP_MEDIA] = { "stop_media_listens", "Stop with media in the room: keep listening", "Voice", NULL, S_BOOL, 0, 1, 1, 0 },
     [FOLLOW_UP_SOUND] = { "follow_up_sound", "Wake sound before a follow-up", "Voice", NULL, S_BOOL, 0, 1, 1, 0 },
     [REPLY_END_WAIT] = { "reply_end_wait", "Follow-up after the reply's real end", "Voice", NULL, S_BOOL, 0, 1, 1, 0 },
     [STOP_MIN]    = { "stop_min_score", "Ignore a stop under this score", "Voice", "%", S_INT, 0, 100, 1, 0 },
@@ -254,6 +255,7 @@ int settings_get(const struct setting *s)
     case TAKEOVER: return core_takeover(-1);
     case WAKE_IN_REQ: return core_wake_in_request(-1);
     case WAKE_PHRASE_MODE: return core_wake_phrase_mode(-1);
+    case STOP_MEDIA: return core_stop_media_listens(-1);
     case FOLLOW_UP_SOUND: return core_follow_up_sound(-1);
     case REPLY_END_WAIT: return core_reply_end_wait(-1);
     case STOP_MIN: return core_stop_min_pct(-1);
@@ -323,6 +325,7 @@ static void put(enum id i, int v)
     case TAKEOVER: core_takeover(v); break;
     case WAKE_IN_REQ: core_wake_in_request(v); break;
     case WAKE_PHRASE_MODE: core_wake_phrase_mode(v); break;
+    case STOP_MEDIA: core_stop_media_listens(v); break;
     case FOLLOW_UP_SOUND: core_follow_up_sound(v); break;
     case REPLY_END_WAIT: core_reply_end_wait(v); break;
     case STOP_MIN: core_stop_min_pct(v); break;

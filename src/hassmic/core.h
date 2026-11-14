@@ -209,6 +209,7 @@ int    core_noise_cap(int set);
 int    core_wake_phrase_mode(int set);
 int    core_follow_up_sound(int set);
 int    core_run_names_phrase(void);
+int    core_stop_media_listens(int set);
 int    core_reply_end_wait(int set);
 int    core_stop_min_pct(int set);
 int    core_wake_clips(int set);

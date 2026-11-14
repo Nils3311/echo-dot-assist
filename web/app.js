@@ -207,7 +207,7 @@ const MOVED = { arbitration: 'echos', bluetooth_audio: 'media', bluetooth_speake
 // last, in a card of its own, so nothing is ever lost from the page
 const LAYOUT = {
   voice: [['Microphone', 'mic_level', 'noise_reduction'], ['Mute and wake sound', 'mute', 'do_not_disturb', 'wake_sound', 'wake_sound_removal'],
-          ['Requests', 'wake_word_in_request', 'end_of_request', 'stop_ends_listening', 'stop_min_score', 'reply_end_wait', 'wake_clips', 'wake_phrase_mode', 'follow_up_sound'], ['Timers', 'timer_ring', 'timer_sound', 'timer_stop_any']],
+          ['Requests', 'wake_word_in_request', 'end_of_request', 'stop_ends_listening', 'stop_min_score', 'reply_end_wait', 'wake_clips', 'wake_phrase_mode', 'follow_up_sound', 'stop_media_listens'], ['Timers', 'timer_ring', 'timer_sound', 'timer_stop_any']],
   wake: [['Engine', 'wake_engine'], ['How it hears you', 'speech_language', 'wake_word_adaptation']],
   lights: [['Brightness', 'led_auto_brightness', 'led_brightness'], ['Position', 'ring_rotation', 'light_band']],
 };

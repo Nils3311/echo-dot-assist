@@ -1096,7 +1096,16 @@ static int stop_heard(void) { return heard_ms && stop_ms >= heard_ms && stop_ms 
  * that wake word's run, started or not.  Without this a ring stopped during the round was followed by a run that
  * listened, with the "stop" in its replayed audio (the round's window is up to 1 s, all of it when the other Echos
  * did not hear the wake word).  With stop_ends_listening any "stop" does */
-static int stopped_now(void) { return stop_heard() && (stop_cut || stop_ends); }
+/* Setting stop_media_listens (on): "<wake word>, stop" ends listening only where nothing plays in the room.  While a
+ * player of arbitration_media_players plays, "Alexa, stop the music" meant the music: ending the run there swallowed
+ * the request and the music went on (kitchen and living room, 10.-12.11., 3 requests, each said again).  So the run
+ * goes on and Home Assistant hears the sentence and pauses the room's player.  Our own playback is paused here as
+ * before (music_stop).  Lock held */
+static int stop_media_listens = 1;
+static int room_playing(void) { for (int i = 0; i < nroom; i++) if (room[i].active) return 1; return 0; }
+static int stop_keeps_listening(void) { return stop_media_listens && room_playing(); }
+int core_stop_media_listens(int set) { if (set >= 0) stop_media_listens = set != 0; return stop_media_listens; }
+static int stopped_now(void) { return stop_heard() && (stop_cut || (stop_ends && !stop_keeps_listening())); }
 
 /* Takeover (setting arbitration_takeover, on by default).  A wrong Echo that woke up (the TV, children in another room)
  * listened for up to 15 s (Home Assistant's VAD limit), and claimed every wake word in that time with priority: "Alexa"
@@ -1220,7 +1229,9 @@ static void stop_word(void)
         if (connected && proto->cancel) quiet_cancel();
         else { barge_in = 0; core_pipeline_finish(); quiet_abort = 1; }
     } else {
-        int quiet = state == LISTENING && stop_ends && stop_heard() && connected && proto->cancel;
+        int keep = state == LISTENING && stop_ends && stop_keeps_listening();
+        int quiet = state == LISTENING && stop_ends && !keep && stop_heard() && connected && proto->cancel;
+        if (keep) fprintf(stderr, "stop: media plays in the room, listening goes on: Home Assistant hears what it is about\n");
         if (!ended && atomic_load(&music_on) && music_stop()) fprintf(stderr, "stop: music paused%s\n", quiet ? "" : ", the pipeline goes on");
         if (quiet) {                                            /* as the button: nothing of the run is carried out */
             fprintf(stderr, "stop: listening ended\n");
