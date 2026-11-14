@@ -1102,7 +1102,7 @@ static int stop_heard(void) { return heard_ms && stop_ms >= heard_ms && stop_ms 
  * goes on and Home Assistant hears the sentence and pauses the room's player.  Our own playback is paused here as
  * before (music_stop).  Lock held */
 static int stop_media_listens = 1;
-static int room_playing(void) { for (int i = 0; i < nroom; i++) if (room[i].active) return 1; return 0; }
+static int room_playing(void);                      /* below, with the room's players */
 static int stop_keeps_listening(void) { return stop_media_listens && room_playing(); }
 int core_stop_media_listens(int set) { if (set >= 0) stop_media_listens = set != 0; return stop_media_listens; }
 static int stopped_now(void) { return stop_heard() && (stop_cut || (stop_ends && !stop_keeps_listening())); }
@@ -1796,6 +1796,7 @@ struct media_player { char id[96], st[16]; int active, known, vol, vol_known; lo
 static struct media_player room[MEDIA_MAX];
 static int noise_cap = 3;                           /* arbitration_noise_cap (claim, noisecap.c) */
 static int nroom, media_ambient = 50, media_linked;  /* media_linked: a keyed link follows the room's players */
+static int room_playing(void) { for (int i = 0; i < nroom; i++) if (room[i].active) return 1; return 0; }   /* lock held */
 static char media_ids[SETTINGS_TEXT_MAX + 1];
 static atomic_llong own_ended;                      /* mono_ms our own music (Sendspin, Bluetooth) last stopped; 0: never */
 
